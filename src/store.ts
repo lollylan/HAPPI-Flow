@@ -1,0 +1,272 @@
+import { AppState, Employee, WorkArea, Skill, Assignment, Absence } from './types';
+import { v4 as uuidv4 } from 'uuid';
+import { useSyncExternalStore } from 'react';
+
+const STORAGE_KEY = 'happi-flow-data';
+
+// ===== SEED DATA =====
+const seedSkills: Skill[] = [
+    { id: uuidv4(), name: 'Blutentnahme', description: 'Venöse und kapillare Blutentnahme', category: 'Medizinisch' },
+    { id: uuidv4(), name: 'Impfen', description: 'Durchführung von Impfungen', category: 'Medizinisch' },
+    { id: uuidv4(), name: 'EKG', description: 'EKG schreiben und anlegen', category: 'Medizinisch' },
+    { id: uuidv4(), name: 'Lungenfunktion', description: 'Spirometrie durchführen', category: 'Medizinisch' },
+    { id: uuidv4(), name: 'Abrechnung', description: 'KV- und Privatabrechnung', category: 'Verwaltung' },
+    { id: uuidv4(), name: 'Rezeption', description: 'Patientenannahme und Terminvergabe', category: 'Verwaltung' },
+    { id: uuidv4(), name: 'Wundversorgung', description: 'Verbandswechsel und Wundmanagement', category: 'Medizinisch' },
+];
+
+const seedWorkAreas: WorkArea[] = [
+    {
+        id: uuidv4(), name: 'Anmeldung', description: 'Patientenempfang und Terminmanagement', isCritical: true, minStaff: 2, requiredSkills: [], icon: '📋', color: '#3b82f6',
+        operatingHours: { monday: 'allday', tuesday: 'allday', wednesday: 'allday', thursday: 'allday', friday: 'allday' }
+    },
+    {
+        id: uuidv4(), name: 'Labor', description: 'Blutentnahme und Labordiagnostik', isCritical: true, minStaff: 1, requiredSkills: [], icon: '🔬', color: '#8b5cf6',
+        operatingHours: { monday: 'morning', tuesday: 'morning', wednesday: 'morning', thursday: 'morning', friday: 'morning' }
+    },
+    {
+        id: uuidv4(), name: 'Notfall-Zimmer', description: 'Akutversorgung und Notfälle', isCritical: true, minStaff: 1, requiredSkills: [], icon: '🚑', color: '#ef4444',
+        operatingHours: { monday: 'allday', tuesday: 'allday', wednesday: 'allday', thursday: 'allday', friday: 'allday' }
+    },
+    {
+        id: uuidv4(), name: 'Backoffice', description: 'Verwaltungsaufgaben und Abrechnung', isCritical: false, minStaff: 0, requiredSkills: [], icon: '🗂️', color: '#f59e0b',
+        operatingHours: { monday: 'allday', tuesday: 'allday', wednesday: 'allday', thursday: 'allday', friday: 'allday' }
+    },
+    {
+        id: uuidv4(), name: 'Homeoffice', description: 'Remote-Arbeit von Zuhause', isCritical: false, minStaff: 0, requiredSkills: [], icon: '🏠', color: '#10b981',
+        operatingHours: { monday: 'allday', tuesday: 'allday', wednesday: 'allday', thursday: 'allday', friday: 'allday' }
+    },
+];
+
+function getInitialState(): AppState {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (stored) {
+        try {
+            const data = JSON.parse(stored);
+            // Migration: Ensure new fields exist
+            if (!data.assignments) data.assignments = [];
+            if (!data.absences) data.absences = [];
+            return data;
+        } catch {
+            // corrupt data
+        }
+    }
+    return {
+        employees: [],
+        workAreas: seedWorkAreas,
+        skills: seedSkills,
+        assignments: [],
+        absences: [],
+        activeView: 'dashboard',
+    };
+}
+
+// ===== STORE =====
+type Listener = () => void;
+
+class Store {
+    private state: AppState;
+    private listeners: Set<Listener> = new Set();
+
+    constructor() {
+        this.state = getInitialState();
+    }
+
+    getState(): AppState {
+        return this.state;
+    }
+
+    subscribe(listener: Listener): () => void {
+        this.listeners.add(listener);
+        return () => this.listeners.delete(listener);
+    }
+
+    private update(partial: Partial<AppState>) {
+        this.state = { ...this.state, ...partial };
+        this.persist();
+        this.listeners.forEach(l => l());
+    }
+
+    private persist() {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(this.state));
+    }
+
+    // ----- View -----
+    setActiveView(view: AppState['activeView']) {
+        this.update({ activeView: view });
+    }
+
+    // ----- Employees -----
+    addEmployee(emp: Employee) {
+        this.update({ employees: [...this.state.employees, emp] });
+    }
+
+    updateEmployee(id: string, data: Partial<Employee>) {
+        this.update({
+            employees: this.state.employees.map(e =>
+                e.id === id ? { ...e, ...data } : e
+            ),
+        });
+    }
+
+    deleteEmployee(id: string) {
+        this.update({
+            employees: this.state.employees.filter(e => e.id !== id),
+        });
+    }
+
+    // ----- Work Areas -----
+    addWorkArea(area: WorkArea) {
+        this.update({ workAreas: [...this.state.workAreas, area] });
+    }
+
+    updateWorkArea(id: string, data: Partial<WorkArea>) {
+        this.update({
+            workAreas: this.state.workAreas.map(a =>
+                a.id === id ? { ...a, ...data } : a
+            ),
+        });
+    }
+
+    deleteWorkArea(id: string) {
+        this.update({
+            workAreas: this.state.workAreas.filter(a => a.id !== id),
+        });
+    }
+
+    // ----- Skills -----
+    addSkill(skill: Skill) {
+        this.update({ skills: [...this.state.skills, skill] });
+    }
+
+    updateSkill(id: string, data: Partial<Skill>) {
+        this.update({
+            skills: this.state.skills.map(s =>
+                s.id === id ? { ...s, ...data } : s
+            ),
+        });
+    }
+
+    deleteSkill(id: string) {
+        // Also remove from employees and work areas
+        this.update({
+            skills: this.state.skills.filter(s => s.id !== id),
+            employees: this.state.employees.map(e => ({
+                ...e,
+                skills: e.skills.filter(sid => sid !== id),
+            })),
+            workAreas: this.state.workAreas.map(a => ({
+                ...a,
+                requiredSkills: a.requiredSkills.filter(sid => sid !== id),
+            })),
+        });
+    }
+
+    // ----- Assignments -----
+    setAssignments(assignments: Assignment[]) {
+        this.update({ assignments });
+    }
+
+    addAssignment(assignment: Assignment) {
+        this.update({ assignments: [...this.state.assignments, assignment] });
+    }
+
+    updateAssignment(id: string, data: Partial<Assignment>) {
+        this.update({
+            assignments: this.state.assignments.map(a =>
+                a.id === id ? { ...a, ...data } : a
+            ),
+        });
+    }
+
+    deleteAssignment(id: string) {
+        this.update({
+            assignments: this.state.assignments.filter(a => a.id !== id),
+        });
+    }
+
+    toggleAssignmentLock(id: string) {
+        const assignment = this.state.assignments.find(a => a.id === id);
+        if (assignment) {
+            this.updateAssignment(id, { isLocked: !assignment.isLocked });
+        }
+    }
+
+    // ----- Absences -----
+    addAbsence(absence: Absence) {
+        this.update({ absences: [...this.state.absences, absence] });
+    }
+
+    updateAbsence(id: string, data: Partial<Absence>) {
+        this.update({
+            absences: this.state.absences.map(a =>
+                a.id === id ? { ...a, ...data } : a
+            ),
+        });
+    }
+
+    deleteAbsence(id: string) {
+        this.update({
+            absences: this.state.absences.filter(a => a.id !== id),
+        });
+    }
+
+    // ----- Reset -----
+    resetAll() {
+        localStorage.removeItem(STORAGE_KEY);
+        this.state = {
+            employees: [],
+            workAreas: seedWorkAreas.map(a => ({ ...a, id: uuidv4() })),
+            skills: seedSkills.map(s => ({ ...s, id: uuidv4() })),
+            assignments: [],
+            absences: [],
+            activeView: 'dashboard',
+        };
+        this.persist();
+        this.listeners.forEach(l => l());
+    }
+
+    // ----- Backup / Restore -----
+    exportData(): string {
+        const exportPayload = {
+            version: 1,
+            exportedAt: new Date().toISOString(),
+            data: {
+                employees: this.state.employees,
+                workAreas: this.state.workAreas,
+                skills: this.state.skills,
+                assignments: this.state.assignments,
+                absences: this.state.absences,
+            },
+        };
+        return JSON.stringify(exportPayload, null, 2);
+    }
+
+    importData(jsonString: string): { success: boolean; message: string } {
+        try {
+            const parsed = JSON.parse(jsonString);
+            if (!parsed.data || !Array.isArray(parsed.data.employees)) {
+                return { success: false, message: 'Ungültiges Dateiformat. Erwartete Struktur nicht gefunden.' };
+            }
+            this.update({
+                employees: parsed.data.employees || [],
+                workAreas: parsed.data.workAreas || [],
+                skills: parsed.data.skills || [],
+                assignments: parsed.data.assignments || [],
+                absences: parsed.data.absences || [],
+            });
+            return { success: true, message: `Import erfolgreich: ${parsed.data.employees.length} Mitarbeiter geladen.` };
+        } catch {
+            return { success: false, message: 'Die Datei konnte nicht gelesen werden. Bitte prüfen Sie das JSON-Format.' };
+        }
+    }
+}
+
+export const store = new Store();
+
+export function useStore(): AppState {
+    return useSyncExternalStore(
+        (cb) => store.subscribe(cb),
+        () => store.getState()
+    );
+}
