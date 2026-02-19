@@ -18,23 +18,23 @@ const seedSkills: Skill[] = [
 const seedWorkAreas: WorkArea[] = [
     {
         id: uuidv4(), name: 'Anmeldung', description: 'Patientenempfang und Terminmanagement', isCritical: true, minStaff: 2, requiredSkills: [], icon: '📋', color: '#3b82f6',
-        operatingHours: { monday: 'allday', tuesday: 'allday', wednesday: 'allday', thursday: 'allday', friday: 'allday' }
+        operatingHours: { monday: ['morning', 'noon', 'afternoon'], tuesday: ['morning', 'noon', 'afternoon'], wednesday: ['morning', 'noon', 'afternoon'], thursday: ['morning', 'noon', 'afternoon'], friday: ['morning', 'noon', 'afternoon'] }
     },
     {
         id: uuidv4(), name: 'Labor', description: 'Blutentnahme und Labordiagnostik', isCritical: true, minStaff: 1, requiredSkills: [], icon: '🔬', color: '#8b5cf6',
-        operatingHours: { monday: 'morning', tuesday: 'morning', wednesday: 'morning', thursday: 'morning', friday: 'morning' }
+        operatingHours: { monday: ['morning'], tuesday: ['morning'], wednesday: ['morning'], thursday: ['morning'], friday: ['morning'] }
     },
     {
         id: uuidv4(), name: 'Notfall-Zimmer', description: 'Akutversorgung und Notfälle', isCritical: true, minStaff: 1, requiredSkills: [], icon: '🚑', color: '#ef4444',
-        operatingHours: { monday: 'allday', tuesday: 'allday', wednesday: 'allday', thursday: 'allday', friday: 'allday' }
+        operatingHours: { monday: ['morning', 'noon', 'afternoon'], tuesday: ['morning', 'noon', 'afternoon'], wednesday: ['morning', 'noon', 'afternoon'], thursday: ['morning', 'noon', 'afternoon'], friday: ['morning', 'noon', 'afternoon'] }
     },
     {
         id: uuidv4(), name: 'Backoffice', description: 'Verwaltungsaufgaben und Abrechnung', isCritical: false, minStaff: 0, requiredSkills: [], icon: '🗂️', color: '#f59e0b',
-        operatingHours: { monday: 'allday', tuesday: 'allday', wednesday: 'allday', thursday: 'allday', friday: 'allday' }
+        operatingHours: { monday: ['morning', 'noon', 'afternoon'], tuesday: ['morning', 'noon', 'afternoon'], wednesday: ['morning', 'noon', 'afternoon'], thursday: ['morning', 'noon', 'afternoon'], friday: ['morning', 'noon', 'afternoon'] }
     },
     {
         id: uuidv4(), name: 'Homeoffice', description: 'Remote-Arbeit von Zuhause', isCritical: false, minStaff: 0, requiredSkills: [], icon: '🏠', color: '#10b981',
-        operatingHours: { monday: 'allday', tuesday: 'allday', wednesday: 'allday', thursday: 'allday', friday: 'allday' }
+        operatingHours: { monday: ['morning', 'noon', 'afternoon'], tuesday: ['morning', 'noon', 'afternoon'], wednesday: ['morning', 'noon', 'afternoon'], thursday: ['morning', 'noon', 'afternoon'], friday: ['morning', 'noon', 'afternoon'] }
     },
 ];
 
@@ -43,9 +43,25 @@ function getInitialState(): AppState {
     if (stored) {
         try {
             const data = JSON.parse(stored);
-            // Migration: Ensure new fields exist
+            // Migration: Ensure new fields exist and fix legacy data types
             if (!data.assignments) data.assignments = [];
             if (!data.absences) data.absences = [];
+
+            if (data.workAreas) {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                data.workAreas.forEach((area: any) => {
+                    if (!area.operatingHours || typeof area.operatingHours.monday === 'string') {
+                        area.operatingHours = {
+                            monday: ['morning', 'noon', 'afternoon'],
+                            tuesday: ['morning', 'noon', 'afternoon'],
+                            wednesday: ['morning', 'noon', 'afternoon'],
+                            thursday: ['morning', 'noon', 'afternoon'],
+                            friday: ['morning', 'noon', 'afternoon']
+                        };
+                    }
+                });
+            }
+
             return data;
         } catch {
             // corrupt data
@@ -131,7 +147,20 @@ class Store {
     deleteWorkArea(id: string) {
         this.update({
             workAreas: this.state.workAreas.filter(a => a.id !== id),
+            assignments: this.state.assignments.filter(a => a.workAreaId !== id)
         });
+    }
+
+    moveWorkArea(id: string, direction: 'up' | 'down') {
+        const index = this.state.workAreas.findIndex(a => a.id === id);
+        if (index === -1) return;
+        const newAreas = [...this.state.workAreas];
+        if (direction === 'up' && index > 0) {
+            [newAreas[index - 1], newAreas[index]] = [newAreas[index], newAreas[index - 1]];
+        } else if (direction === 'down' && index < newAreas.length - 1) {
+            [newAreas[index + 1], newAreas[index]] = [newAreas[index], newAreas[index + 1]];
+        }
+        this.update({ workAreas: newAreas });
     }
 
     // ----- Skills -----

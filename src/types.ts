@@ -5,7 +5,7 @@ export interface WorkArea {
     name: string;
     description: string;
     isCritical: boolean;
-    criticalTimeSlot: CriticalTimeSlot; // when the area must be staffed
+    operatingHours: Record<keyof WeeklyAvailability, ('morning' | 'noon' | 'afternoon')[]>;
     minStaff: number; // minimum required staff
     requiredSkills: string[]; // skill IDs
     icon: string; // emoji
@@ -30,7 +30,7 @@ export interface AssignmentRule {
     count: number; // how many times per week
 }
 
-export type DayAvailability = 'full' | 'morning' | 'afternoon' | 'unavailable';
+export type DayAvailability = 'full' | 'morning' | 'noon' | 'afternoon' | 'unavailable';
 
 export interface WeeklyAvailability {
     monday: DayAvailability;
@@ -65,11 +65,11 @@ export interface Assignment {
     employeeId: string;
     day: keyof WeeklyAvailability; // Keep for backward compat / easy access
     date: string; // ISO Date YYYY-MM-DD. Mandatory for new logic.
-    timeSlot: 'morning' | 'afternoon';
+    timeSlot: 'morning' | 'noon' | 'afternoon';
     isLocked: boolean;
 }
 
-export type AbsenceType = 'vacation' | 'sick' | 'training' | 'other';
+export type AbsenceType = 'vacation' | 'sick' | 'training' | 'other' | 'overtime';
 export type AbsenceStatus = 'requested' | 'approved' | 'rejected';
 
 export interface Absence {
@@ -120,6 +120,7 @@ export const DAY_FULL_LABELS: Record<keyof WeeklyAvailability, string> = {
 export const AVAILABILITY_LABELS: Record<DayAvailability, string> = {
     full: 'Ganztags',
     morning: 'Nur Vormittag',
+    noon: 'Nur Mittag',
     afternoon: 'Nur Nachmittag',
     unavailable: 'Nicht verfügbar',
 };
@@ -127,21 +128,10 @@ export const AVAILABILITY_LABELS: Record<DayAvailability, string> = {
 export const AVAILABILITY_OPTIONS: { value: DayAvailability; label: string }[] = [
     { value: 'full', label: 'Ganztags' },
     { value: 'morning', label: 'Vormittag' },
+    { value: 'noon', label: 'Mittag' },
     { value: 'afternoon', label: 'Nachmittag' },
     { value: 'unavailable', label: 'Nicht verfügbar' },
 ];
-
-export const CRITICAL_TIMESLOT_OPTIONS: { value: CriticalTimeSlot; label: string }[] = [
-    { value: 'allday', label: 'Ganztags' },
-    { value: 'morning', label: 'Nur Vormittag (08:00–13:00)' },
-    { value: 'afternoon', label: 'Nur Nachmittag (16:00–18:00)' },
-];
-
-export const CRITICAL_TIMESLOT_LABELS: Record<CriticalTimeSlot, string> = {
-    allday: 'Ganztags',
-    morning: 'Vormittag',
-    afternoon: 'Nachmittag',
-};
 
 // Color presets for work areas
 export const AREA_COLORS = [

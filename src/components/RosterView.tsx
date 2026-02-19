@@ -8,6 +8,7 @@ export function RosterView() {
     const { employees, workAreas, assignments, absences } = useStore();
     const [isGenerating, setIsGenerating] = useState(false);
     const [selectedSlot, setSelectedSlot] = useState<{ areaId: string, day: keyof WeeklyAvailability, slot: 'morning' | 'noon' | 'afternoon' } | null>(null);
+    const [rosterWarnings, setRosterWarnings] = useState<string[]>([]);
 
     // State for Week Selection (Default: This week's Monday)
     const [currentWeekStart, setCurrentWeekStart] = useState(() => {
@@ -73,12 +74,13 @@ export function RosterView() {
         setCurrentWeekStart(monday.toISOString().split('T')[0]);
     }
 
-    function isAbsent(empId: string, dateStr: string) {
-        return absences.some(a =>
+    function getAbsenceStatus(empId: string, dateStr: string) {
+        const absence = absences.find(a =>
             a.employeeId === empId &&
             a.startDate <= dateStr &&
             a.endDate >= dateStr
         );
+        return absence ? absence.status : null;
     }
 
     // Filter assignments for current view
@@ -90,7 +92,7 @@ export function RosterView() {
     });
 
     // Helper to find assignment needed for cell
-    function getAssignment(areaId: string, day: keyof WeeklyAvailability, slot: 'morning' | 'afternoon') {
+    function getAssignment(areaId: string, day: keyof WeeklyAvailability, slot: 'morning' | 'noon' | 'afternoon') {
         const date = weekDates[day];
         return currentAssignments.find(a =>
             a.workAreaId === areaId &&
@@ -101,7 +103,9 @@ export function RosterView() {
 
     function generateRoster() {
         setIsGenerating(true);
+        setRosterWarnings([]);
         setTimeout(() => {
+            const warnings: string[] = [];
             // Keep locked assignments for THIS week
             const lockedAssignments = currentAssignments.filter(a => a.isLocked);
             const newAssignmentsForWeek: Assignment[] = [...lockedAssignments];
@@ -117,107 +121,138 @@ export function RosterView() {
             for (const day of days) {
                 const dateStr = weekDates[day];
 
-                const assignedMorning = new Set<string>();
-                const assignedAfternoon = new Set<string>();
+                const assignedSets = {
+                    morning: new Set<string>(),
+                    noon: new Set<string>(),
+                    afternoon: new Set<string>()
+                };
 
                 // Pre-fill locked
                 for (const ass of lockedAssignments) {
                     if (ass.date === dateStr) {
-                        const set = ass.timeSlot === 'morning' ? assignedMorning : assignedAfternoon;
-                        set.add(ass.employeeId);
+                        assignedSets[ass.timeSlot].add(ass.employeeId);
                     }
                 }
 
                 for (const slot of timeSlots) {
-                    const assignedSet = slot === 'morning' ? assignedMorning : assignedAfternoon;
+                    const assignedSet = assignedSets[slot];
 
-                    const sortedAreas = [...workAreas].sort((a, b) => {
-                        // Urgency & Criticality logic
-                        const urgencyA = employees.reduce((sum, emp) => {
-                            if (!emp.isActive) return sum;
-                            const rule = emp.rules?.find(r => r.workAreaId === a.id && r.type === 'min');
-                            const current = ruleCounts.get(`${emp.id}-${a.id}`) || 0;
-                            return (rule && current < rule.count) ? sum + 1 : sum;
-                        }, 0);
-                        const urgencyB = employees.reduce((sum, emp) => {
-                            if (!emp.isActive) return sum;
-                            const rule = emp.rules?.find(r => r.workAreaId === b.id && r.type === 'min');
-                            const current = ruleCounts.get(`${emp.id}-${b.id}`) || 0;
-                            return (rule && current < rule.count) ? sum + 1 : sum;
-                        }, 0);
-                        if (urgencyA !== urgencyB) return urgencyB - urgencyA;
-                        return Number(b.isCritical) - Number(a.isCritical);
+                    const availableForSlot = employees.filter(emp => {
+                        if (!emp.isActive) return false;
+                        const avail = emp.availability[day];
+                        if (avail === 'unavailable') return false;
+                        if (avail !== 'full' && avail !== slot) return false;
+                        const absStatus = getAbsenceStatus(emp.id, dateStr);
+                        if (absStatus === 'approved') return false;
+                        return true;
                     });
 
-                    for (const area of sortedAreas) {
-                        // Check if locked
-                        if (currentAssignments.some(a => a.workAreaId === area.id && a.date === dateStr && a.timeSlot === slot && a.isLocked)) continue;
+                    const areaCounts = new Map<string, number>();
+                    workAreas.forEach(a => {
+                        const count = lockedAssignments.filter(ass => ass.workAreaId === a.id && ass.date === dateStr && ass.timeSlot === slot).length;
+                        areaCounts.set(a.id, count);
+                    });
 
-                        // Critical Timeslot Check
-                        if (area.criticalTimeSlot === 'morning' && slot === 'afternoon') continue;
-                        if (area.criticalTimeSlot === 'afternoon' && slot === 'morning') continue;
+                    let madeAssignment = true;
+                    while (madeAssignment) {
+                        madeAssignment = false;
 
-                        // Candidates
-                        const candidates = employees.filter(emp => {
-                            if (!emp.isActive) return false;
+                        const sortedAreas = [...workAreas].filter(a => a.operatingHours?.[day]?.includes(slot)).sort((a, b) => {
+                            const aCount = areaCounts.get(a.id) || 0;
+                            const bCount = areaCounts.get(b.id) || 0;
+                            const aNeedsMin = aCount < a.minStaff;
+                            const bNeedsMin = bCount < b.minStaff;
 
-                            // 1. Skills
-                            if (area.requiredSkills.length > 0) {
-                                if (!area.requiredSkills.every(s => emp.skills.includes(s))) return false;
-                            }
-                            // 2. Availability (Weekday check)
-                            const avail = emp.availability[day];
-                            if (avail === 'unavailable') return false;
-                            if (avail !== 'full' && avail !== slot) return false;
+                            if (aNeedsMin && !bNeedsMin) return -1;
+                            if (!aNeedsMin && bNeedsMin) return 1;
 
-                            // 3. Not assigned
-                            if (assignedSet.has(emp.id)) return false;
+                            if (a.isCritical && !b.isCritical) return -1;
+                            if (!a.isCritical && b.isCritical) return 1;
 
-                            // 3b. Not Absent (Date check!)
-                            if (isAbsent(emp.id, dateStr)) return false;
+                            const urgencyA = employees.reduce((sum, emp) => {
+                                if (!emp.isActive) return sum;
+                                const rule = emp.rules?.find(r => r.workAreaId === a.id && r.type === 'min');
+                                const current = ruleCounts.get(`${emp.id}-${a.id}`) || 0;
+                                return (rule && current < rule.count) ? sum + 1 : sum;
+                            }, 0);
+                            const urgencyB = employees.reduce((sum, emp) => {
+                                if (!emp.isActive) return sum;
+                                const rule = emp.rules?.find(r => r.workAreaId === b.id && r.type === 'min');
+                                const current = ruleCounts.get(`${emp.id}-${b.id}`) || 0;
+                                return (rule && current < rule.count) ? sum + 1 : sum;
+                            }, 0);
+                            if (urgencyA !== urgencyB) return urgencyB - urgencyA;
 
-                            // 4. Max Rules
-                            const currentCount = ruleCounts.get(`${emp.id}-${area.id}`) || 0;
-                            const maxRule = emp.rules?.find(r => r.workAreaId === area.id && r.type === 'max');
-                            if (maxRule && currentCount >= maxRule.count) return false;
-
-                            return true;
+                            return aCount - bCount;
                         });
 
-                        if (candidates.length > 0) {
-                            // Scoring
-                            const scored = candidates.map(emp => {
-                                let score = 0;
+                        for (const area of sortedAreas) {
+                            const candidates = availableForSlot.filter(emp => {
+                                if (assignedSet.has(emp.id)) return false;
+
+                                if (area.requiredSkills.length > 0) {
+                                    if (!area.requiredSkills.every(s => emp.skills.includes(s))) return false;
+                                }
+
                                 const currentCount = ruleCounts.get(`${emp.id}-${area.id}`) || 0;
-                                const minRule = emp.rules?.find(r => r.workAreaId === area.id && r.type === 'min');
-                                if (minRule && currentCount < minRule.count) score += 5000;
+                                const maxRule = emp.rules?.find(r => r.workAreaId === area.id && r.type === 'max');
+                                if (maxRule && currentCount >= maxRule.count) return false;
 
-                                const pref = emp.areaPreferences?.[area.id] || 'neutral';
-                                if (pref === 'preferred') score += 20;
-                                if (pref === 'neutral') score += 10;
-                                if (pref === 'dislike') score -= 10;
-                                if (pref === 'avoid') score -= 50;
-                                return { emp, score };
+                                return true;
                             });
 
-                            scored.sort((a, b) => b.score - a.score);
-                            const winner = scored[0].emp;
+                            if (candidates.length > 0) {
+                                const scored = candidates.map(emp => {
+                                    let score = 0;
+                                    const currentCount = ruleCounts.get(`${emp.id}-${area.id}`) || 0;
+                                    const absStatus = getAbsenceStatus(emp.id, dateStr);
+                                    if (absStatus === 'requested') score -= 10000;
 
-                            // Assign
-                            newAssignmentsForWeek.push({
-                                id: uuidv4(),
-                                workAreaId: area.id,
-                                employeeId: winner.id,
-                                day: day,
-                                date: dateStr, // Assign Date!
-                                timeSlot: slot,
-                                isLocked: false
-                            });
+                                    const minRule = emp.rules?.find(r => r.workAreaId === area.id && r.type === 'min');
+                                    if (minRule && currentCount < minRule.count) score += 5000;
 
-                            assignedSet.add(winner.id);
-                            const key = `${winner.id}-${area.id}`;
-                            ruleCounts.set(key, (ruleCounts.get(key) || 0) + 1);
+                                    const pref = emp.areaPreferences?.[area.id] || 'neutral';
+                                    if (pref === 'preferred') score += 20;
+                                    if (pref === 'neutral') score += 10;
+                                    if (pref === 'dislike') score -= 10;
+                                    if (pref === 'avoid') score -= 50;
+
+                                    // Distribute evenly if area is already fully staffed
+                                    if (areaCounts.get(area.id)! >= area.minStaff) {
+                                        score -= 5;
+                                    }
+
+                                    return { emp, score };
+                                });
+
+                                scored.sort((a, b) => b.score - a.score);
+                                const winner = scored[0].emp;
+
+                                newAssignmentsForWeek.push({
+                                    id: uuidv4(),
+                                    workAreaId: area.id,
+                                    employeeId: winner.id,
+                                    day,
+                                    date: dateStr,
+                                    timeSlot: slot,
+                                    isLocked: false
+                                });
+
+                                assignedSet.add(winner.id);
+                                const key = `${winner.id}-${area.id}`;
+                                ruleCounts.set(key, (ruleCounts.get(key) || 0) + 1);
+                                areaCounts.set(area.id, areaCounts.get(area.id)! + 1);
+
+                                madeAssignment = true;
+                                break;
+                            }
                         }
+                    }
+
+                    const leftovers = availableForSlot.filter(emp => !assignedSet.has(emp.id));
+                    if (leftovers.length > 0) {
+                        const names = leftovers.map(emp => `${emp.firstName} ${emp.lastName}`).join(', ');
+                        warnings.push(`Am ${DAY_LABELS[day]} (${slot === 'morning' ? 'Vormittag' : slot === 'noon' ? 'Mittag' : 'Nachmittag'}) blieben Mitarbeiter ohne Aufgabe: ${names}`);
                     }
                 }
             }
@@ -225,11 +260,12 @@ export function RosterView() {
             // Update Store: Remove assignments for this week, add new ones
             const otherAssignments = assignments.filter(a => !(a.date >= weekDates.monday && a.date <= weekDates.friday));
             store.setAssignments([...otherAssignments, ...newAssignmentsForWeek]);
+            setRosterWarnings(warnings);
             setIsGenerating(false);
         }, 800);
     }
 
-    function handleAddManual(areaId: string, day: keyof WeeklyAvailability, slot: 'morning' | 'afternoon') {
+    function handleAddManual(areaId: string, day: keyof WeeklyAvailability, slot: 'morning' | 'noon' | 'afternoon') {
         setSelectedSlot({ areaId, day, slot });
     }
 
@@ -238,10 +274,16 @@ export function RosterView() {
         const { areaId, day, slot } = selectedSlot;
         const dateStr = weekDates[day];
 
-        // Remove existing in this slot
+        // Remove existing in this CELL
         const existing = getAssignment(areaId, day, slot);
         if (existing) {
             store.deleteAssignment(existing.id);
+        }
+
+        // Add clash prevention: remove this employee from *any* other assignment in the same slot on this day
+        const existingEmpAss = assignments.find(a => a.employeeId === empId && a.date === dateStr && a.timeSlot === slot);
+        if (existingEmpAss) {
+            store.deleteAssignment(existingEmpAss.id);
         }
 
         const newAss: Assignment = {
@@ -313,6 +355,19 @@ export function RosterView() {
                 </div>
             </div>
 
+            {rosterWarnings.length > 0 && (
+                <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 mb-6 shadow-sm animate-fade-in relative overflow-hidden">
+                    <div className="absolute left-0 top-0 bottom-0 w-1 bg-amber-500"></div>
+                    <div className="flex items-center gap-2 mb-2 text-amber-500 font-bold">
+                        <AlertTriangle size={18} />
+                        Planungshinweise
+                    </div>
+                    <ul className="list-disc list-inside text-sm text-amber-200/90 space-y-1">
+                        {rosterWarnings.map((w, i) => <li key={i}>{w}</li>)}
+                    </ul>
+                </div>
+            )}
+
             {/* Roster Table */}
             <div className="bg-slate-900 border border-slate-700 rounded-xl overflow-hidden shadow-xl">
                 <div className="overflow-x-auto">
@@ -356,7 +411,7 @@ export function RosterView() {
                                         <td key={day} className="p-2 border-r border-slate-700/30 bg-slate-900/30 vertical-top h-32 relative">
                                             <div className="flex flex-col h-full gap-2">
                                                 {/* Morning Slot */}
-                                                {(area.criticalTimeSlot === 'allday' || area.criticalTimeSlot === 'morning') && (
+                                                {(area.operatingHours?.[day]?.includes('morning')) && (
                                                     <SlotCell
                                                         label="VM"
                                                         assignment={getAssignment(area.id, day, 'morning')}
@@ -368,8 +423,21 @@ export function RosterView() {
                                                     />
                                                 )}
 
+                                                {/* Noon Slot */}
+                                                {(area.operatingHours?.[day]?.includes('noon')) && (
+                                                    <SlotCell
+                                                        label="MI"
+                                                        assignment={getAssignment(area.id, day, 'noon')}
+                                                        employees={employees}
+                                                        isCritical={area.isCritical}
+                                                        onLock={(id: string) => store.toggleAssignmentLock(id)}
+                                                        onDelete={deleteFromSlot}
+                                                        onAdd={() => handleAddManual(area.id, day, 'noon')}
+                                                    />
+                                                )}
+
                                                 {/* Afternoon Slot */}
-                                                {(area.criticalTimeSlot === 'allday' || area.criticalTimeSlot === 'afternoon') && (
+                                                {(area.operatingHours?.[day]?.includes('afternoon')) && (
                                                     <SlotCell
                                                         label="NM"
                                                         assignment={getAssignment(area.id, day, 'afternoon')}
@@ -400,13 +468,15 @@ export function RosterView() {
                                 Mitarbeiter auswählen
                             </h3>
                             <p className="text-xs text-slate-400 mt-1">
-                                {DAY_LABELS[selectedSlot.day]} {selectedSlot.slot === 'morning' ? 'Vormittag' : 'Nachmittag'} · {weekDates[selectedSlot.day]}
+                                {DAY_LABELS[selectedSlot.day]} {selectedSlot.slot === 'morning' ? 'Vormittag' : selectedSlot.slot === 'noon' ? 'Mittag' : 'Nachmittag'} · {weekDates[selectedSlot.day]}
                             </p>
                         </div>
                         <div className="max-h-[60vh] overflow-y-auto p-2">
                             {employees.filter(e => e.isActive).map(emp => {
                                 // Check availability/absence for styling
-                                const isAbs = isAbsent(emp.id, weekDates[selectedSlot.day]);
+                                const absStatus = getAbsenceStatus(emp.id, weekDates[selectedSlot.day]);
+                                const isAbsFull = absStatus === 'approved';
+                                const isAbsRequested = absStatus === 'requested';
                                 const avail = emp.availability[selectedSlot.day];
                                 const isUnavail = avail === 'unavailable' || (avail !== 'full' && avail !== selectedSlot.slot);
 
@@ -414,21 +484,22 @@ export function RosterView() {
                                     <button
                                         key={emp.id}
                                         onClick={() => confirmManualAssignment(emp.id)}
-                                        disabled={isAbs}
+                                        disabled={isAbsFull}
                                         className={`w-full flex items-center gap-3 p-3 rounded-lg transition-colors text-left border mb-1
-                                            ${isAbs ? 'opacity-50 grayscale cursor-not-allowed bg-slate-800 border-transparent' :
-                                                isUnavail ? 'bg-slate-800/50 text-slate-400 border-transparent hover:bg-slate-800' :
-                                                    'bg-slate-800 text-slate-200 border-slate-700 hover:bg-blue-600 hover:border-blue-500 hover:text-white group'
+                                            ${isAbsFull ? 'opacity-50 grayscale cursor-not-allowed bg-slate-800 border-transparent' :
+                                                isAbsRequested ? 'bg-amber-900/20 border-amber-500/30 text-slate-200 hover:bg-amber-500/40' :
+                                                    isUnavail ? 'bg-slate-800/50 text-slate-400 border-transparent hover:bg-slate-800' :
+                                                        'bg-slate-800 text-slate-200 border-slate-700 hover:bg-blue-600 hover:border-blue-500 hover:text-white group'
                                             }
                                         `}
                                     >
-                                        <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${isAbs ? 'bg-slate-700' : 'bg-slate-700 group-hover:bg-blue-500 text-slate-300 group-hover:text-white'}`}>
+                                        <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${isAbsFull ? 'bg-slate-700' : isAbsRequested ? 'bg-amber-500/20 text-amber-400' : 'bg-slate-700 group-hover:bg-blue-500 text-slate-300 group-hover:text-white'}`}>
                                             {emp.firstName[0]}{emp.lastName[0]}
                                         </div>
                                         <div>
                                             <div className="font-medium">{emp.firstName} {emp.lastName}</div>
                                             <div className="text-[10px] opacity-70">
-                                                {isAbs ? 'Abwesend (Urlaub/Krank)' : isUnavail ? 'Nicht verfügbar' : 'Verfügbar'}
+                                                {isAbsFull ? 'Abwesend (Urlaub/Krank)' : isAbsRequested ? 'Urlaubswunsch für diesen Tag' : isUnavail ? 'Nicht verfügbar' : 'Verfügbar'}
                                             </div>
                                         </div>
                                     </button>

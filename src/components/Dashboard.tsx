@@ -1,4 +1,3 @@
-import { CRITICAL_TIMESLOT_LABELS } from '../types';
 import { useStore } from '../store';
 import { Users, MapPin, Award, AlertTriangle, Clock, Briefcase } from 'lucide-react';
 
@@ -19,8 +18,7 @@ export function Dashboard() {
             area.requiredSkills.length === 0 || area.requiredSkills.every(rs => emp.skills.includes(rs))
         ).length;
         if (qualifiedCount < minRequired) {
-            const timeInfo = area.criticalTimeSlot !== 'allday' ? ` (${CRITICAL_TIMESLOT_LABELS[area.criticalTimeSlot]})` : '';
-            warnings.push(`"${area.name}"${timeInfo}: Nur ${qualifiedCount} von ${minRequired} benötigten Mitarbeitern qualifiziert!`);
+            warnings.push(`"${area.name}": Nur ${qualifiedCount} von ${minRequired} benötigten Mitarbeitern qualifiziert!`);
         }
     });
 
@@ -164,18 +162,15 @@ export function Dashboard() {
                                         <div className="flex items-center gap-2">
                                             <span>{area.icon}</span>
                                             <span className="text-sm text-slate-300">{area.name}</span>
-                                            {area.criticalTimeSlot !== 'allday' && (
-                                                <span className="badge badge-warning text-[9px]">{CRITICAL_TIMESLOT_LABELS[area.criticalTimeSlot]}</span>
-                                            )}
                                         </div>
                                         <div className="flex items-center gap-2">
                                             <span className={`text-xs font-medium ${status === 'good' ? 'text-emerald-400' :
-                                                    status === 'warning' ? 'text-amber-400' : 'text-rose-400'
+                                                status === 'warning' ? 'text-amber-400' : 'text-rose-400'
                                                 }`}>
                                                 {qualifiedCount}/{minRequired} besetzt
                                             </span>
                                             <div className={`w-2 h-2 rounded-full ${status === 'good' ? 'bg-emerald-400' :
-                                                    status === 'warning' ? 'bg-amber-400' : 'bg-rose-400'
+                                                status === 'warning' ? 'bg-amber-400' : 'bg-rose-400'
                                                 }`} />
                                         </div>
                                     </div>

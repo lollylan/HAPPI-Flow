@@ -173,6 +173,7 @@ export function EmployeesView() {
         switch (val) {
             case 'full': return 'text-emerald-400 bg-emerald-500/15';
             case 'morning': return 'text-amber-400 bg-amber-500/15';
+            case 'noon': return 'text-yellow-400 bg-yellow-500/15';
             case 'afternoon': return 'text-primary-400 bg-primary-500/15';
             case 'unavailable': return 'text-rose-400 bg-rose-500/15';
         }
@@ -182,6 +183,7 @@ export function EmployeesView() {
         switch (val) {
             case 'full': return 'GT';
             case 'morning': return 'VM';
+            case 'noon': return 'MI';
             case 'afternoon': return 'NM';
             case 'unavailable': return '—';
         }
@@ -691,6 +693,7 @@ export function EmployeesView() {
                                                     >
                                                         <option value="full">Ganztags</option>
                                                         <option value="morning">Vorm.</option>
+                                                        <option value="noon">Mittag</option>
                                                         <option value="afternoon">Nachm.</option>
                                                         <option value="unavailable">-</option>
                                                     </select>

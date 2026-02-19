@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Plus, Pencil, Trash2, X, Check, Search, AlertCircle, Users, Clock } from 'lucide-react';
-import { WorkArea, CriticalTimeSlot, AREA_COLORS, AREA_ICONS, CRITICAL_TIMESLOT_OPTIONS, CRITICAL_TIMESLOT_LABELS } from '../types';
+import { Plus, Pencil, Trash2, X, Check, Search, AlertCircle, Users, Clock, ChevronUp, ChevronDown } from 'lucide-react';
+import { WorkArea, AREA_COLORS, AREA_ICONS, WeeklyAvailability, DAY_FULL_LABELS } from '../types';
 import { store, useStore } from '../store';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -9,18 +9,26 @@ interface AreaFormData {
     name: string;
     description: string;
     isCritical: boolean;
-    criticalTimeSlot: CriticalTimeSlot;
+    operatingHours: Record<keyof WeeklyAvailability, ('morning' | 'noon' | 'afternoon')[]>;
     minStaff: number;
     requiredSkills: string[];
     icon: string;
     color: string;
 }
 
+const emptyOperatingHours = {
+    monday: ['morning', 'noon', 'afternoon'],
+    tuesday: ['morning', 'noon', 'afternoon'],
+    wednesday: ['morning', 'noon', 'afternoon'],
+    thursday: ['morning', 'noon', 'afternoon'],
+    friday: ['morning', 'noon', 'afternoon'],
+} as Record<keyof WeeklyAvailability, ('morning' | 'noon' | 'afternoon')[]>;
+
 const emptyForm: AreaFormData = {
     name: '',
     description: '',
     isCritical: false,
-    criticalTimeSlot: 'allday',
+    operatingHours: JSON.parse(JSON.stringify(emptyOperatingHours)),
     minStaff: 1,
     requiredSkills: [],
     icon: '🏥',
@@ -51,7 +59,7 @@ export function WorkAreasView() {
             name: area.name,
             description: area.description,
             isCritical: area.isCritical,
-            criticalTimeSlot: area.criticalTimeSlot || 'allday',
+            operatingHours: JSON.parse(JSON.stringify(area.operatingHours || emptyOperatingHours)),
             minStaff: area.minStaff || 1,
             requiredSkills: [...area.requiredSkills],
             icon: area.icon,
@@ -87,6 +95,22 @@ export function WorkAreasView() {
                 ? prev.requiredSkills.filter(s => s !== skillId)
                 : [...prev.requiredSkills, skillId],
         }));
+    }
+
+    function toggleOperatingHour(day: keyof WeeklyAvailability, slot: 'morning' | 'noon' | 'afternoon') {
+        setForm(prev => {
+            const currentSlots = prev.operatingHours[day];
+            const newSlots = currentSlots.includes(slot)
+                ? currentSlots.filter(s => s !== slot)
+                : [...currentSlots, slot];
+            return {
+                ...prev,
+                operatingHours: {
+                    ...prev.operatingHours,
+                    [day]: newSlots
+                }
+            };
+        });
     }
 
     const criticalCount = workAreas.filter(a => a.isCritical).length;
@@ -170,6 +194,14 @@ export function WorkAreasView() {
                                     </div>
                                 </div>
                                 <div className="flex items-center gap-1">
+                                    <div className="flex flex-col mr-1">
+                                        <button className={`p-0 text-slate-500 transition-colors ${i === 0 ? 'opacity-30 cursor-not-allowed' : 'hover:text-white'}`} onClick={() => i > 0 && store.moveWorkArea(area.id, 'up')} title="Nach oben" disabled={i === 0}>
+                                            <ChevronUp size={16} />
+                                        </button>
+                                        <button className={`p-0 text-slate-500 transition-colors ${i === filteredAreas.length - 1 ? 'opacity-30 cursor-not-allowed' : 'hover:text-white'}`} onClick={() => i < filteredAreas.length - 1 && store.moveWorkArea(area.id, 'down')} title="Nach unten" disabled={i === filteredAreas.length - 1}>
+                                            <ChevronDown size={16} />
+                                        </button>
+                                    </div>
                                     <button
                                         className="p-1.5 rounded-lg hover:bg-slate-700/50 text-slate-400 hover:text-white transition-colors"
                                         onClick={() => openEdit(area)}
@@ -324,7 +356,7 @@ export function WorkAreasView() {
                                     </div>
 
                                     {form.isCritical && (
-                                        <div className="grid grid-cols-2 gap-3 p-2.5 rounded-lg bg-rose-500/5 border border-rose-500/10 animate-fade-in">
+                                        <div className="grid grid-cols-1 gap-3 p-2.5 rounded-lg bg-rose-500/5 border border-rose-500/10 animate-fade-in mb-3">
                                             <div>
                                                 <label className="block text-xs font-medium text-slate-400 mb-1 flex items-center gap-1">
                                                     <Users size={12} />
@@ -334,28 +366,45 @@ export function WorkAreasView() {
                                                     type="number"
                                                     value={form.minStaff}
                                                     onChange={e => setForm(prev => ({ ...prev, minStaff: Math.max(1, Number(e.target.value)) }))}
-                                                    className="input-field py-1.5"
+                                                    className="input-field py-1.5 w-full md:w-1/2"
                                                     min={1}
                                                     max={10}
                                                 />
                                             </div>
-                                            <div>
-                                                <label className="block text-xs font-medium text-slate-400 mb-1 flex items-center gap-1">
-                                                    <Clock size={12} />
-                                                    Zeitfenster
-                                                </label>
-                                                <select
-                                                    value={form.criticalTimeSlot}
-                                                    onChange={e => setForm(prev => ({ ...prev, criticalTimeSlot: e.target.value as CriticalTimeSlot }))}
-                                                    className="input-field py-1.5"
-                                                >
-                                                    {CRITICAL_TIMESLOT_OPTIONS.map(opt => (
-                                                        <option key={opt.value} value={opt.value}>{opt.label}</option>
-                                                    ))}
-                                                </select>
-                                            </div>
                                         </div>
                                     )}
+
+                                    {/* Operating Hours (Einsatzzeiten) */}
+                                    <div className="mt-4">
+                                        <label className="block text-xs font-medium text-slate-400 mb-2 flex items-center gap-1">
+                                            <Clock size={12} />
+                                            Einsatzzeiten (wann existiert dieser Bereich?)
+                                        </label>
+                                        <div className="bg-slate-900/30 border border-slate-700/50 rounded-lg overflow-hidden">
+                                            <div className="flex bg-slate-800/80 text-[10px] font-bold text-slate-400 border-b border-slate-700/50">
+                                                <div className="w-24 p-2 border-r border-slate-700/50">Tag</div>
+                                                <div className="flex-1 p-2 text-center border-r border-slate-700/50">Vormittag</div>
+                                                <div className="flex-1 p-2 text-center border-r border-slate-700/50">Mittag</div>
+                                                <div className="flex-1 p-2 text-center">Nachmittag</div>
+                                            </div>
+                                            {(Object.keys(DAY_FULL_LABELS) as Array<keyof WeeklyAvailability>).map(day => (
+                                                <div key={day} className="flex border-b border-slate-700/30 last:border-0 hover:bg-slate-800/30 text-xs">
+                                                    <div className="w-24 p-2 font-medium text-slate-300 border-r border-slate-700/50 flex items-center">
+                                                        {DAY_FULL_LABELS[day]}
+                                                    </div>
+                                                    <div className="flex-1 border-r border-slate-700/50 flex items-center justify-center p-1.5 hover:bg-slate-800/40 cursor-pointer" onClick={() => toggleOperatingHour(day, 'morning')}>
+                                                        <input type="checkbox" checked={form.operatingHours[day].includes('morning')} onChange={() => { }} className="pointer-events-none" />
+                                                    </div>
+                                                    <div className="flex-1 border-r border-slate-700/50 flex items-center justify-center p-1.5 hover:bg-slate-800/40 cursor-pointer" onClick={() => toggleOperatingHour(day, 'noon')}>
+                                                        <input type="checkbox" checked={form.operatingHours[day].includes('noon')} onChange={() => { }} className="pointer-events-none" />
+                                                    </div>
+                                                    <div className="flex-1 flex items-center justify-center p-1.5 hover:bg-slate-800/40 cursor-pointer" onClick={() => toggleOperatingHour(day, 'afternoon')}>
+                                                        <input type="checkbox" checked={form.operatingHours[day].includes('afternoon')} onChange={() => { }} className="pointer-events-none" />
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
                                 </div>
 
                                 {/* Required Skills */}
