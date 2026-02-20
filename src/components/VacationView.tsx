@@ -206,25 +206,19 @@ export function VacationView() {
         setShowModal(false);
     }
 
-    function autoPlanClosure(closureId: string) {
-        const closure = closures.find(c => c.id === closureId);
-        if (!closure) return;
+    function autoPlanAllClosures() {
+        if (!window.confirm("Der Algorithmus wird nun Urlaubstage für ALLE Praxisschließzeiten verteilen und notwendige Notbesetzungen einteilen. Fortfahren?")) return;
 
-        if (!window.confirm("Der Algorithmus wird nun Urlaubstage verteilen und eine Notbesetzung einteilen. Bestehende (manuelle) Urlaubswünsche innerhalb der Schließzeit werden dabei berücksichtigt.\n\nFortfahren?")) return;
-
-        const previousAutos = absences.filter(a => a.notes === 'Automatisch (Schließzeit)' && ((a.startDate >= closure.startDate && a.startDate <= closure.endDate) || (a.endDate >= closure.startDate && a.endDate <= closure.endDate)));
+        const previousAutos = absences.filter(a => a.notes === 'Automatisch (Schließzeit)');
         const currentAbsences = absences.filter(a => !previousAutos.some(p => p.id === a.id));
-
-        let d = new Date(closure.startDate);
-        const end = new Date(closure.endDate);
 
         const remainingVac = new Map<string, number>();
         employees.forEach(emp => {
             let used = emp.vacationDaysUsed || 0;
             const empAbs = currentAbsences.filter(a => a.employeeId === emp.id && a.type === 'vacation' && a.status === 'approved');
             empAbs.forEach(absence => {
-                let current = new Date(absence.startDate);
-                const aEnd = new Date(absence.endDate);
+                let current = new Date(absence.startDate + "T12:00:00");
+                const aEnd = new Date(absence.endDate + "T12:00:00");
                 while (current <= aEnd) {
                     const dayOfWeek = current.getDay();
                     if (dayOfWeek !== 0 && dayOfWeek !== 6) {
@@ -238,127 +232,127 @@ export function VacationView() {
             remainingVac.set(emp.id, (emp.vacationDaysTotal + emp.vacationDaysCarryover) - used);
         });
 
-        const workedYesterday = new Set<string>();
-        const vacationGrants: { empId: string, date: string }[] = [];
-
-        const closureRequests = currentAbsences.filter(a => a.status === 'requested' && a.startDate >= closure.startDate && a.endDate <= closure.endDate);
-
-        while (d <= end) {
-            const isoDate = d.toISOString().split('T')[0];
-            const dayOfWeek = d.getDay();
-
-            if (dayOfWeek !== 0 && dayOfWeek !== 6) {
-                const dayMap: Record<number, keyof WeeklyAvailability> = {
-                    1: 'monday', 2: 'tuesday', 3: 'wednesday', 4: 'thursday', 5: 'friday'
-                };
-                const dayName = dayMap[dayOfWeek];
-
-                const candidates = employees.filter(e => e.isActive && e.availability[dayName]?.isWorking);
-
-                const mustWork: Employee[] = [];
-                const canWork: { emp: Employee, cost: number }[] = [];
-
-                const dailyAbsences = currentAbsences.filter(a => a.startDate <= isoDate && a.endDate >= isoDate);
-
-                candidates.forEach(emp => {
-                    const existingAbs = dailyAbsences.find(a => a.employeeId === emp.id);
-                    if (existingAbs?.status === 'approved') {
-                        workedYesterday.delete(emp.id);
-                        return;
-                    }
-
-                    let rem = remainingVac.get(emp.id) || 0;
-                    if (rem <= 0) {
-                        mustWork.push(emp);
-                    } else {
-                        let cost = rem * 100;
-                        if (existingAbs?.status === 'requested') cost += 10000;
-                        if (workedYesterday.has(emp.id)) cost -= 5000;
-                        canWork.push({ emp, cost });
-                    }
-                });
-
-                const workers = new Set<string>(mustWork.map(e => e.id));
-                if (workers.size < 1 && canWork.length > 0) {
-                    canWork.sort((a, b) => a.cost - b.cost);
-                    workers.add(canWork[0].emp.id);
-                }
-
-                workedYesterday.clear();
-
-                candidates.forEach(emp => {
-                    const existingAbs = dailyAbsences.find(a => a.employeeId === emp.id);
-                    if (workers.has(emp.id)) {
-                        workedYesterday.add(emp.id);
-                    } else if (!existingAbs || existingAbs.status !== 'approved') {
-                        vacationGrants.push({ empId: emp.id, date: isoDate });
-                        remainingVac.set(emp.id, (remainingVac.get(emp.id) || 0) - 1);
-                    }
-                });
-            }
-            d.setDate(d.getDate() + 1);
-        }
-
+        const sortedClosures = [...closures].sort((a, b) => a.startDate.localeCompare(b.startDate));
         const newAbsences: Absence[] = [];
 
-        employees.forEach(emp => {
-            const grants = vacationGrants.filter(g => g.empId === emp.id).map(g => g.date).sort();
-            if (grants.length === 0) return;
+        sortedClosures.forEach(closure => {
+            let d = new Date(closure.startDate + "T12:00:00");
+            const end = new Date(closure.endDate + "T12:00:00");
 
-            let blockStart = grants[0];
-            let prevDate = new Date(blockStart);
+            const workedYesterday = new Set<string>();
+            const vacationGrants: { empId: string, date: string }[] = [];
 
-            for (let i = 1; i <= grants.length; i++) {
-                const currentStr = grants[i];
-                const currDate = currentStr ? new Date(currentStr) : null;
+            while (d <= end) {
+                const isoDate = d.toISOString().split('T')[0];
+                const dayOfWeek = d.getDay();
 
-                let canMerge = false;
-                if (currDate) {
-                    canMerge = true;
-                    let check = new Date(prevDate);
-                    check.setDate(check.getDate() + 1);
-                    while (check < currDate) {
-                        const dayOfWeek = check.getDay();
-                        if (dayOfWeek !== 0 && dayOfWeek !== 6) {
-                            const dayMap: Record<number, keyof WeeklyAvailability> = {
-                                1: 'monday', 2: 'tuesday', 3: 'wednesday', 4: 'thursday', 5: 'friday'
-                            };
-                            const dayName = dayMap[dayOfWeek];
-                            if (dayName && emp.availability[dayName]?.isWorking) {
-                                canMerge = false;
-                                break;
-                            }
+                if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+                    const dayMap: Record<number, keyof WeeklyAvailability> = {
+                        1: 'monday', 2: 'tuesday', 3: 'wednesday', 4: 'thursday', 5: 'friday'
+                    };
+                    const dayName = dayMap[dayOfWeek];
+
+                    const candidates = employees.filter(e => e.isActive && e.availability[dayName]?.isWorking);
+
+                    const mustWork: Employee[] = [];
+                    const canWork: { emp: Employee, cost: number }[] = [];
+
+                    const dailyAbsences = [...currentAbsences, ...newAbsences].filter(a => a.startDate <= isoDate && a.endDate >= isoDate);
+
+                    candidates.forEach(emp => {
+                        const existingAbs = dailyAbsences.find(a => a.employeeId === emp.id);
+                        if (existingAbs?.status === 'approved') {
+                            workedYesterday.delete(emp.id);
+                            return;
                         }
-                        check.setDate(check.getDate() + 1);
-                    }
-                }
 
-                if (!canMerge || !currDate) {
-                    newAbsences.push({
-                        id: uuidv4(),
-                        employeeId: emp.id,
-                        startDate: blockStart,
-                        endDate: prevDate.toISOString().split('T')[0],
-                        type: 'vacation',
-                        status: 'approved',
-                        notes: 'Automatisch (Schließzeit)'
+                        let rem = remainingVac.get(emp.id) || 0;
+                        if (rem <= 0) {
+                            mustWork.push(emp);
+                        } else {
+                            let cost = rem * 100;
+                            if (existingAbs?.status === 'requested') cost += 10000;
+                            if (workedYesterday.has(emp.id)) cost -= 5000;
+                            canWork.push({ emp, cost });
+                        }
                     });
-                    if (currentStr) {
-                        blockStart = currentStr;
-                        prevDate = new Date(currentStr);
+
+                    const workers = new Set<string>(mustWork.map(e => e.id));
+                    if (workers.size < 1 && canWork.length > 0) {
+                        canWork.sort((a, b) => a.cost - b.cost);
+                        workers.add(canWork[0].emp.id);
                     }
-                } else {
-                    if (currDate) prevDate = currDate;
+
+                    workedYesterday.clear();
+
+                    candidates.forEach(emp => {
+                        const existingAbs = dailyAbsences.find(a => a.employeeId === emp.id);
+                        if (workers.has(emp.id)) {
+                            workedYesterday.add(emp.id);
+                        } else if (!existingAbs || existingAbs.status !== 'approved') {
+                            vacationGrants.push({ empId: emp.id, date: isoDate });
+                            remainingVac.set(emp.id, (remainingVac.get(emp.id) || 0) - 1);
+                        }
+                    });
                 }
+                d.setDate(d.getDate() + 1);
             }
+
+            employees.forEach(emp => {
+                const grants = vacationGrants.filter(g => g.empId === emp.id).map(g => g.date).sort();
+                if (grants.length === 0) return;
+
+                let blockStart = grants[0];
+                let prevDate = new Date(blockStart + "T12:00:00");
+
+                for (let i = 1; i <= grants.length; i++) {
+                    const currentStr = grants[i];
+                    const currDate = currentStr ? new Date(currentStr + "T12:00:00") : null;
+
+                    let canMerge = false;
+                    if (currDate) {
+                        canMerge = true;
+                        let check = new Date(prevDate);
+                        check.setDate(check.getDate() + 1);
+                        while (check < currDate) {
+                            const dayOfWeek = check.getDay();
+                            if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+                                const dayMap: Record<number, keyof WeeklyAvailability> = {
+                                    1: 'monday', 2: 'tuesday', 3: 'wednesday', 4: 'thursday', 5: 'friday'
+                                };
+                                const dayName = dayMap[dayOfWeek];
+                                if (dayName && emp.availability[dayName]?.isWorking) {
+                                    canMerge = false;
+                                    break;
+                                }
+                            }
+                            check.setDate(check.getDate() + 1);
+                        }
+                    }
+
+                    if (!canMerge || !currDate) {
+                        newAbsences.push({
+                            id: uuidv4(),
+                            employeeId: emp.id,
+                            startDate: blockStart,
+                            endDate: prevDate.toISOString().split('T')[0],
+                            type: 'vacation',
+                            status: 'approved',
+                            notes: 'Automatisch (Schließzeit)'
+                        });
+                        if (currentStr) {
+                            blockStart = currentStr;
+                            prevDate = new Date(currentStr + "T12:00:00");
+                        }
+                    } else {
+                        if (currDate) prevDate = currDate;
+                    }
+                }
+            });
         });
 
-        const toDelete = [
-            ...previousAutos.map(a => a.id),
-            ...closureRequests.map(r => r.id)
-        ];
-
-        toDelete.forEach(id => store.deleteAbsence(id));
+        const toDeleteIds = previousAutos.map(a => a.id);
+        toDeleteIds.forEach(id => store.deleteAbsence(id));
         newAbsences.forEach(abs => store.addAbsence(abs));
 
         setShowModal(false);
@@ -380,8 +374,8 @@ export function VacationView() {
         const empAbsences = absences.filter(a => a.employeeId === employee.id && a.type === 'vacation' && a.status === 'approved');
 
         empAbsences.forEach(absence => {
-            let current = new Date(absence.startDate);
-            const end = new Date(absence.endDate);
+            let current = new Date(absence.startDate + "T12:00:00");
+            const end = new Date(absence.endDate + "T12:00:00");
 
             while (current <= end) {
                 const dayOfWeek = current.getDay();
@@ -436,6 +430,11 @@ export function VacationView() {
                         <span className="w-40 text-center font-medium text-slate-200">{monthLabel}</span>
                         <button onClick={nextMonth} className="p-1 hover:bg-slate-700 rounded text-slate-400 hover:text-white"><ChevronRight size={20} /></button>
                     </div>
+                    {closures.length > 0 && (
+                        <button onClick={autoPlanAllClosures} className="btn bg-indigo-500/20 text-indigo-400 border border-indigo-500/50 hover:bg-indigo-500/30 flex items-center gap-2">
+                            <Sparkles size={18} /> Alle Schließzeiten verteilen
+                        </button>
+                    )}
                     <button onClick={openCreate} className="btn btn-primary flex items-center gap-2">
                         <Plus size={18} /> Neuer Antrag
                     </button>
@@ -685,11 +684,6 @@ export function VacationView() {
                                 {(editingAbsence || editingClosure) && (
                                     <button onClick={remove} className="text-rose-400 hover:bg-rose-500/10 px-3 py-2 rounded-lg font-medium transition-colors">
                                         Löschen
-                                    </button>
-                                )}
-                                {editingClosure && (
-                                    <button onClick={() => autoPlanClosure(editingClosure.id)} className="ml-2 flex flex-row items-center gap-1.5 px-3 py-2 rounded-lg font-medium bg-indigo-500/20 text-indigo-400 hover:bg-indigo-500/30 border border-indigo-500/50 transition-colors">
-                                        <Sparkles size={16} /> Urlaub automatisch verteilen
                                     </button>
                                 )}
                             </div>
