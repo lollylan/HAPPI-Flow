@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useStore, store } from '../store';
-import { Absence, AbsenceType, AbsenceStatus, PracticeClosure } from '../types';
+import { Absence, AbsenceType, AbsenceStatus, PracticeClosure, Employee, WeeklyAvailability } from '../types';
 import { Calendar, ChevronLeft, ChevronRight, Plus, Palmtree, Thermometer, GraduationCap, HelpCircle, X, Check, Search, Clock, Home } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -216,6 +216,55 @@ export function VacationView() {
         }
     }
 
+    function calculateVacationDaysUsed(employee: Employee) {
+        let used = employee.vacationDaysUsed || 0;
+
+        const empAbsences = absences.filter(a => a.employeeId === employee.id && a.type === 'vacation' && a.status === 'approved');
+
+        empAbsences.forEach(absence => {
+            let current = new Date(absence.startDate);
+            const end = new Date(absence.endDate);
+
+            while (current <= end) {
+                const dayOfWeek = current.getDay();
+                if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+                    const dayMap: Record<number, keyof WeeklyAvailability> = {
+                        1: 'monday',
+                        2: 'tuesday',
+                        3: 'wednesday',
+                        4: 'thursday',
+                        5: 'friday'
+                    };
+                    const dayName = dayMap[dayOfWeek];
+                    if (dayName && employee.availability[dayName]?.isWorking) {
+                        used += 1;
+                    }
+                }
+                current.setDate(current.getDate() + 1);
+            }
+        });
+
+        return used;
+    }
+
+    function renderVacationCounter(employee: Employee) {
+        const totalAvailable = employee.vacationDaysTotal + employee.vacationDaysCarryover;
+        const used = calculateVacationDaysUsed(employee);
+        const remaining = totalAvailable - used;
+
+        let colorObj = "text-slate-500";
+        if (remaining < 0) colorObj = "text-rose-400";
+        else if (remaining <= 5) colorObj = "text-amber-400";
+        else colorObj = "text-emerald-400";
+
+        return (
+            <div className="flex flex-col items-end shrink-0" title={`Urlaubsanspruch: ${totalAvailable} (${employee.vacationDaysTotal} + ${employee.vacationDaysCarryover} Übertrag)\nGenommen/Geplant: ${used} (${remaining} übrig)`}>
+                <span className={`text-[10px] font-bold ${colorObj}`}>{remaining} / {totalAvailable}</span>
+                <span className="text-[8px] uppercase tracking-widest text-slate-500 opacity-60 mt-[1px]">Tage</span>
+            </div>
+        )
+    }
+
     return (
         <div className="animate-fade-in h-screen flex flex-col p-6 absolute inset-0 overflow-hidden">
             <div className="flex items-center justify-between mb-6 shrink-0">
@@ -301,13 +350,16 @@ export function VacationView() {
                             <div className="absolute inset-0 pointer-events-none group-hover:bg-slate-600/10 z-0"></div>
 
                             {/* Name Column */}
-                            <div className={`w-56 px-4 flex items-center gap-3 shrink-0 border-r border-slate-700/50 sticky left-0 z-10 transition-colors bg-slate-900/95 group-hover:bg-slate-800/95`}>
-                                <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold bg-slate-800 text-slate-400`}>
-                                    {emp.firstName[0]}{emp.lastName[0]}
+                            <div className={`w-56 px-4 flex items-center justify-between shrink-0 border-r border-slate-700/50 sticky left-0 z-10 transition-colors bg-slate-900/95 group-hover:bg-slate-800/95`}>
+                                <div className="flex items-center gap-2 truncate">
+                                    <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold bg-slate-800 text-slate-400 shrink-0`}>
+                                        {emp.firstName[0]}{emp.lastName[0]}
+                                    </div>
+                                    <span className="text-sm truncate text-slate-300">
+                                        {emp.firstName} {emp.lastName}
+                                    </span>
                                 </div>
-                                <span className="text-sm truncate text-slate-300">
-                                    {emp.firstName} {emp.lastName}
-                                </span>
+                                {renderVacationCounter(emp)}
                             </div>
 
                             {/* Timeline Columns */}
