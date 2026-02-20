@@ -46,57 +46,85 @@ const defaultSlotSettings: WeeklySlotTimes = {
     friday: { morning: { isActive: true, start: '08:00', end: '12:00' }, noon: { isActive: true, start: '12:00', end: '14:00' }, afternoon: { isActive: true, start: '14:00', end: '18:00' } },
 };
 
+function migrateData(data: any): AppState {
+    if (!data || typeof data !== 'object') data = {};
+    if (!Array.isArray(data.employees)) data.employees = [];
+    if (!Array.isArray(data.workAreas) || data.workAreas.length === 0) data.workAreas = seedWorkAreas;
+    if (!Array.isArray(data.skills)) data.skills = seedSkills;
+    if (!Array.isArray(data.assignments)) data.assignments = [];
+    if (!Array.isArray(data.absences)) data.absences = [];
+    if (!Array.isArray(data.closures)) data.closures = [];
+    if (!data.activeView) data.activeView = 'dashboard';
+
+    if (data.workAreas) {
+        data.workAreas.forEach((area: any) => {
+            if (!area.requiredSkills) area.requiredSkills = [];
+
+            // Re-structure to ensure array
+            const defaultHours = {
+                monday: ['morning', 'noon', 'afternoon'],
+                tuesday: ['morning', 'noon', 'afternoon'],
+                wednesday: ['morning', 'noon', 'afternoon'],
+                thursday: ['morning', 'noon', 'afternoon'],
+                friday: ['morning', 'noon', 'afternoon']
+            };
+
+            if (!area.operatingHours || typeof area.operatingHours !== 'object') {
+                area.operatingHours = defaultHours;
+            } else {
+                ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'].forEach(day => {
+                    if (!Array.isArray(area.operatingHours[day])) {
+                        area.operatingHours[day] = defaultHours[day as keyof typeof defaultHours];
+                    }
+                });
+            }
+        });
+    }
+
+    if (!data.slotSettings) {
+        data.slotSettings = defaultSlotSettings;
+    } else {
+        // Migrate to add isActive flag
+        const days: (keyof WeeklySlotTimes)[] = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'];
+        days.forEach(day => {
+            const slots: ('morning' | 'noon' | 'afternoon')[] = ['morning', 'noon', 'afternoon'];
+            slots.forEach(slot => {
+                if (data.slotSettings[day] && data.slotSettings[day][slot] && data.slotSettings[day][slot].isActive === undefined) {
+                    data.slotSettings[day][slot].isActive = true;
+                }
+            });
+        });
+    }
+
+    if (data.employees) {
+        // Migrate and inject missing properties for older employee states
+        data.employees.forEach((emp: any) => {
+            if (emp.vacationDaysTotal === undefined) emp.vacationDaysTotal = 30;
+            if (emp.vacationDaysCarryover === undefined) emp.vacationDaysCarryover = 0;
+            if (emp.vacationDaysUsed === undefined) emp.vacationDaysUsed = 0;
+            if (emp.overtimeBalance === undefined) emp.overtimeBalance = 0;
+            if (emp.targetHoursPerWeek === undefined) emp.targetHoursPerWeek = 40;
+            if (emp.status === undefined) emp.status = 'fulltime';
+            if (emp.isActive === undefined) emp.isActive = true;
+            if (emp.canHomeoffice === undefined) emp.canHomeoffice = false;
+            if (!emp.areaPreferences) emp.areaPreferences = {};
+            if (!emp.rules) emp.rules = [];
+            if (!emp.skills) emp.skills = [];
+            if (!emp.availability || typeof emp.availability.monday === 'string') {
+                emp.availability = JSON.parse(JSON.stringify(DEFAULT_AVAILABILITY));
+            }
+        });
+    }
+
+    return data;
+}
+
 function getInitialState(): AppState {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored) {
         try {
             const data = JSON.parse(stored);
-            // Migration: Ensure new fields exist and fix legacy data types
-            if (!data.assignments) data.assignments = [];
-            if (!data.absences) data.absences = [];
-            if (!data.closures) data.closures = [];
-
-            if (data.workAreas) {
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                data.workAreas.forEach((area: any) => {
-                    if (!area.operatingHours || typeof area.operatingHours.monday === 'string') {
-                        area.operatingHours = {
-                            monday: ['morning', 'noon', 'afternoon'],
-                            tuesday: ['morning', 'noon', 'afternoon'],
-                            wednesday: ['morning', 'noon', 'afternoon'],
-                            thursday: ['morning', 'noon', 'afternoon'],
-                            friday: ['morning', 'noon', 'afternoon']
-                        };
-                    }
-                });
-            }
-
-            if (!data.slotSettings) {
-                data.slotSettings = defaultSlotSettings;
-            } else {
-                // Migrate to add isActive flag
-                const days: (keyof WeeklySlotTimes)[] = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'];
-                days.forEach(day => {
-                    const slots: ('morning' | 'noon' | 'afternoon')[] = ['morning', 'noon', 'afternoon'];
-                    slots.forEach(slot => {
-                        if (data.slotSettings[day] && data.slotSettings[day][slot] && data.slotSettings[day][slot].isActive === undefined) {
-                            data.slotSettings[day][slot].isActive = true;
-                        }
-                    });
-                });
-            }
-
-            if (data.employees) {
-                // Migrate old string-based availability to WeeklyWorkTimes
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                data.employees.forEach((emp: any) => {
-                    if (emp.availability && typeof emp.availability.monday === 'string') {
-                        emp.availability = JSON.parse(JSON.stringify(DEFAULT_AVAILABILITY));
-                    }
-                });
-            }
-
-            return data;
+            return migrateData(data);
         } catch {
             // corrupt data
         }
@@ -136,7 +164,8 @@ class Store {
                 if (serverData && Object.keys(serverData).length > 0) {
                     // Preserve local activeView but take server truth for everything else
                     const localView = this.state.activeView;
-                    this.state = { ...this.state, ...serverData, activeView: localView };
+                    const migratedServerData = migrateData(serverData);
+                    this.state = { ...this.state, ...migratedServerData, activeView: localView };
                     this.persist(false); // save to local storage, don't trigger push back
                     this.listeners.forEach(l => l());
                 } else if (this.state.employees.length > 0 || this.state.assignments.length > 0) {

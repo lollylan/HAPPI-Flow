@@ -394,7 +394,7 @@ export function VacationView() {
                         5: 'friday'
                     };
                     const dayName = dayMap[dayOfWeek];
-                    if (dayName && employee.availability[dayName]?.isWorking) {
+                    if (dayName && employee.availability && employee.availability[dayName]?.isWorking) {
                         used += 1;
                     }
                 }

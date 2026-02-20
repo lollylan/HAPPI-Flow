@@ -515,9 +515,9 @@ export function EmployeesView() {
                         </div>
 
                         <div className="modal-body flex-1">
-                            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 h-full">
+                            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 h-full">
                                 {/* LEFT COLUMN: Stammdaten & Vertrag */}
-                                <div className="space-y-6">
+                                <div className="lg:col-span-3 space-y-6">
                                     {/* Linke Spalte Header */}
                                     <div className="flex items-center gap-2 text-primary-400 border-b border-white/5 pb-2">
                                         <Briefcase size={16} />
@@ -661,7 +661,7 @@ export function EmployeesView() {
                                 </div>
 
                                 {/* RIGHT COLUMN: Skills & Availability */}
-                                <div className="space-y-5">
+                                <div className="lg:col-span-5 space-y-5">
                                     {/* Rechte Spalte Header */}
                                     <div className="flex items-center gap-2 text-accent-400 border-b border-white/5 pb-2">
                                         <Check size={16} />
@@ -727,7 +727,7 @@ export function EmployeesView() {
                                 </div>
 
                                 {/* RIGHT COLUMN: Preferences */}
-                                <div className="space-y-6">
+                                <div className="lg:col-span-4 space-y-6">
                                     <div className="flex items-center gap-2 text-rose-400 border-b border-white/5 pb-2">
                                         <Heart size={16} />
                                         <h4 className="font-semibold text-sm uppercase tracking-wider">Präferenzen</h4>

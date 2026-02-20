@@ -2,13 +2,45 @@ import { useStore } from '../store';
 import { Users, MapPin, Award, AlertTriangle, Clock, Briefcase } from 'lucide-react';
 
 export function Dashboard() {
-    const { employees, workAreas, skills } = useStore();
+    const { employees, workAreas, skills, absences } = useStore();
 
     const activeEmployees = employees.filter(e => e.isActive);
     const criticalAreas = workAreas.filter(a => a.isCritical);
     const optionalAreas = workAreas.filter(a => !a.isCritical);
-    const totalVacationDays = employees.reduce((s, e) => s + e.vacationDaysTotal + e.vacationDaysCarryover - e.vacationDaysUsed, 0);
-    const totalOvertime = employees.reduce((s, e) => s + e.overtimeBalance, 0);
+
+    // Helper to calculate exact used vacation days considering work days and weekends
+    const calculateUsed = (employee: any) => {
+        let used = 0;
+        const empAbsences = absences.filter(a => a.employeeId === employee.id && a.type === 'vacation' && a.status === 'approved');
+
+        empAbsences.forEach(absence => {
+            let current = new Date(absence.startDate + "T12:00:00");
+            const end = new Date(absence.endDate + "T12:00:00");
+
+            while (current <= end) {
+                const dayOfWeek = current.getDay();
+                if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+                    const dayMap: Record<number, string> = { 1: 'monday', 2: 'tuesday', 3: 'wednesday', 4: 'thursday', 5: 'friday' };
+                    const dayName = dayMap[dayOfWeek];
+                    // @ts-ignore
+                    if (dayName && employee.availability && employee.availability[dayName]?.isWorking) {
+                        used += 1;
+                    }
+                }
+                current.setDate(current.getDate() + 1);
+            }
+        });
+        return used;
+    };
+
+    // Calculate safely relying on existing properties and absences
+    const totalVacationDays = employees.reduce((s, e) => {
+        const used = calculateUsed(e);
+        const total = (e.vacationDaysTotal || 0) + (e.vacationDaysCarryover || 0);
+        return s + (total - used);
+    }, 0);
+
+    const totalOvertime = employees.reduce((s, e) => s + (e.overtimeBalance || 0), 0);
 
     // Check for potential issues
     const warnings: string[] = [];
