@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useStore, store } from '../store';
 import { Absence, AbsenceType, AbsenceStatus, PracticeClosure, Employee, WeeklyAvailability } from '../types';
-import { Calendar, ChevronLeft, ChevronRight, Plus, Palmtree, Thermometer, GraduationCap, HelpCircle, X, Check, Search, Clock, Home } from 'lucide-react';
+import { Calendar, ChevronLeft, ChevronRight, Plus, Palmtree, Thermometer, GraduationCap, HelpCircle, X, Check, Search, Clock, Home, Sparkles } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 
 export function VacationView() {
@@ -203,6 +203,164 @@ export function VacationView() {
                 store.addAbsence(newAbsence);
             }
         }
+        setShowModal(false);
+    }
+
+    function autoPlanClosure(closureId: string) {
+        const closure = closures.find(c => c.id === closureId);
+        if (!closure) return;
+
+        if (!window.confirm("Der Algorithmus wird nun Urlaubstage verteilen und eine Notbesetzung einteilen. Bestehende (manuelle) Urlaubswünsche innerhalb der Schließzeit werden dabei berücksichtigt.\n\nFortfahren?")) return;
+
+        const previousAutos = absences.filter(a => a.notes === 'Automatisch (Schließzeit)' && ((a.startDate >= closure.startDate && a.startDate <= closure.endDate) || (a.endDate >= closure.startDate && a.endDate <= closure.endDate)));
+        const currentAbsences = absences.filter(a => !previousAutos.some(p => p.id === a.id));
+
+        let d = new Date(closure.startDate);
+        const end = new Date(closure.endDate);
+
+        const remainingVac = new Map<string, number>();
+        employees.forEach(emp => {
+            let used = emp.vacationDaysUsed || 0;
+            const empAbs = currentAbsences.filter(a => a.employeeId === emp.id && a.type === 'vacation' && a.status === 'approved');
+            empAbs.forEach(absence => {
+                let current = new Date(absence.startDate);
+                const aEnd = new Date(absence.endDate);
+                while (current <= aEnd) {
+                    const dayOfWeek = current.getDay();
+                    if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+                        const dayMap: Record<number, keyof WeeklyAvailability> = { 1: 'monday', 2: 'tuesday', 3: 'wednesday', 4: 'thursday', 5: 'friday' };
+                        const dayName = dayMap[dayOfWeek];
+                        if (dayName && emp.availability[dayName]?.isWorking) used++;
+                    }
+                    current.setDate(current.getDate() + 1);
+                }
+            });
+            remainingVac.set(emp.id, (emp.vacationDaysTotal + emp.vacationDaysCarryover) - used);
+        });
+
+        const workedYesterday = new Set<string>();
+        const vacationGrants: { empId: string, date: string }[] = [];
+
+        const closureRequests = currentAbsences.filter(a => a.status === 'requested' && a.startDate >= closure.startDate && a.endDate <= closure.endDate);
+
+        while (d <= end) {
+            const isoDate = d.toISOString().split('T')[0];
+            const dayOfWeek = d.getDay();
+
+            if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+                const dayMap: Record<number, keyof WeeklyAvailability> = {
+                    1: 'monday', 2: 'tuesday', 3: 'wednesday', 4: 'thursday', 5: 'friday'
+                };
+                const dayName = dayMap[dayOfWeek];
+
+                const candidates = employees.filter(e => e.isActive && e.availability[dayName]?.isWorking);
+
+                const mustWork: Employee[] = [];
+                const canWork: { emp: Employee, cost: number }[] = [];
+
+                const dailyAbsences = currentAbsences.filter(a => a.startDate <= isoDate && a.endDate >= isoDate);
+
+                candidates.forEach(emp => {
+                    const existingAbs = dailyAbsences.find(a => a.employeeId === emp.id);
+                    if (existingAbs?.status === 'approved') {
+                        workedYesterday.delete(emp.id);
+                        return;
+                    }
+
+                    let rem = remainingVac.get(emp.id) || 0;
+                    if (rem <= 0) {
+                        mustWork.push(emp);
+                    } else {
+                        let cost = rem * 100;
+                        if (existingAbs?.status === 'requested') cost += 10000;
+                        if (workedYesterday.has(emp.id)) cost -= 5000;
+                        canWork.push({ emp, cost });
+                    }
+                });
+
+                const workers = new Set<string>(mustWork.map(e => e.id));
+                if (workers.size < 1 && canWork.length > 0) {
+                    canWork.sort((a, b) => a.cost - b.cost);
+                    workers.add(canWork[0].emp.id);
+                }
+
+                workedYesterday.clear();
+
+                candidates.forEach(emp => {
+                    const existingAbs = dailyAbsences.find(a => a.employeeId === emp.id);
+                    if (workers.has(emp.id)) {
+                        workedYesterday.add(emp.id);
+                    } else if (!existingAbs || existingAbs.status !== 'approved') {
+                        vacationGrants.push({ empId: emp.id, date: isoDate });
+                        remainingVac.set(emp.id, (remainingVac.get(emp.id) || 0) - 1);
+                    }
+                });
+            }
+            d.setDate(d.getDate() + 1);
+        }
+
+        const newAbsences: Absence[] = [];
+
+        employees.forEach(emp => {
+            const grants = vacationGrants.filter(g => g.empId === emp.id).map(g => g.date).sort();
+            if (grants.length === 0) return;
+
+            let blockStart = grants[0];
+            let prevDate = new Date(blockStart);
+
+            for (let i = 1; i <= grants.length; i++) {
+                const currentStr = grants[i];
+                const currDate = currentStr ? new Date(currentStr) : null;
+
+                let canMerge = false;
+                if (currDate) {
+                    canMerge = true;
+                    let check = new Date(prevDate);
+                    check.setDate(check.getDate() + 1);
+                    while (check < currDate) {
+                        const dayOfWeek = check.getDay();
+                        if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+                            const dayMap: Record<number, keyof WeeklyAvailability> = {
+                                1: 'monday', 2: 'tuesday', 3: 'wednesday', 4: 'thursday', 5: 'friday'
+                            };
+                            const dayName = dayMap[dayOfWeek];
+                            if (dayName && emp.availability[dayName]?.isWorking) {
+                                canMerge = false;
+                                break;
+                            }
+                        }
+                        check.setDate(check.getDate() + 1);
+                    }
+                }
+
+                if (!canMerge || !currDate) {
+                    newAbsences.push({
+                        id: uuidv4(),
+                        employeeId: emp.id,
+                        startDate: blockStart,
+                        endDate: prevDate.toISOString().split('T')[0],
+                        type: 'vacation',
+                        status: 'approved',
+                        notes: 'Automatisch (Schließzeit)'
+                    });
+                    if (currentStr) {
+                        blockStart = currentStr;
+                        prevDate = new Date(currentStr);
+                    }
+                } else {
+                    if (currDate) prevDate = currDate;
+                }
+            }
+        });
+
+        const toDelete = [
+            ...previousAutos.map(a => a.id),
+            ...closureRequests.map(r => r.id)
+        ];
+
+        toDelete.forEach(id => store.deleteAbsence(id));
+        newAbsences.forEach(abs => store.addAbsence(abs));
+
         setShowModal(false);
     }
 
@@ -522,18 +680,25 @@ export function VacationView() {
                                 </div>
                             </div>
                         </div>
-                        <div className="p-5 border-t border-slate-800 bg-slate-900/50 flex justify-between">
-                            {(editingAbsence || editingClosure) ? (
-                                <button onClick={remove} className="text-rose-400 hover:bg-rose-500/10 px-3 py-2 rounded-lg text-sm font-medium transition-colors">
-                                    Löschen
-                                </button>
-                            ) : <div></div>}
+                        <div className="p-5 border-t border-slate-800 bg-slate-900/50 flex justify-between items-center text-sm">
+                            <div className="flex items-center gap-2">
+                                {(editingAbsence || editingClosure) && (
+                                    <button onClick={remove} className="text-rose-400 hover:bg-rose-500/10 px-3 py-2 rounded-lg font-medium transition-colors">
+                                        Löschen
+                                    </button>
+                                )}
+                                {editingClosure && (
+                                    <button onClick={() => autoPlanClosure(editingClosure.id)} className="ml-2 flex flex-row items-center gap-1.5 px-3 py-2 rounded-lg font-medium bg-indigo-500/20 text-indigo-400 hover:bg-indigo-500/30 border border-indigo-500/50 transition-colors">
+                                        <Sparkles size={16} /> Urlaub automatisch verteilen
+                                    </button>
+                                )}
+                            </div>
                             <div className="flex gap-3">
-                                <button onClick={() => setShowModal(false)} className="px-4 py-2 rounded-lg text-slate-300 hover:bg-slate-800 font-medium text-sm transition-colors">
+                                <button onClick={() => setShowModal(false)} className="px-4 py-2 rounded-lg text-slate-300 hover:bg-slate-800 font-medium transition-colors">
                                     Abbrechen
                                 </button>
-                                <button onClick={save} className="btn btn-primary px-6 py-2 text-sm">
-                                    Dienstplan Eintrag speichern
+                                <button onClick={save} className="btn btn-primary px-6 py-2">
+                                    {isClosureForm ? 'Schließzeit speichern' : 'Eintrag speichern'}
                                 </button>
                             </div>
                         </div>
