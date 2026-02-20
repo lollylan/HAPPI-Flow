@@ -17,7 +17,7 @@ export function SettingsView() {
         setTimeout(() => setResetDone(false), 3000);
     }
 
-    function updateTime(day: keyof WeeklyAvailability, slot: keyof DailySlotTimes, field: 'start' | 'end', value: string) {
+    function updateTime(day: keyof WeeklyAvailability, slot: keyof DailySlotTimes, field: 'start' | 'end' | 'isActive', value: string | boolean) {
         const newSettings = JSON.parse(JSON.stringify(slotSettings));
         newSettings[day][slot][field] = value;
         store.updateSlotSettings(newSettings);
@@ -121,10 +121,16 @@ export function SettingsView() {
                                         const time = slotSettings[day][slot];
                                         return (
                                             <td key={slot} className="px-2 py-2 text-center border-r border-slate-700/50 last:border-0">
-                                                <div className="flex items-center justify-center gap-1">
-                                                    <input type="time" value={time.start} onChange={(e) => updateTime(day, slot, 'start', e.target.value)} className="bg-slate-800 text-slate-300 border border-slate-600 rounded px-1.5 py-1 w-[70px] focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500" />
-                                                    <span className="text-slate-500">-</span>
-                                                    <input type="time" value={time.end} onChange={(e) => updateTime(day, slot, 'end', e.target.value)} className="bg-slate-800 text-slate-300 border border-slate-600 rounded px-1.5 py-1 w-[70px] focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500" />
+                                                <div className="flex flex-col items-center justify-center gap-1.5">
+                                                    <div className="flex items-center gap-1">
+                                                        <input type="checkbox" checked={time.isActive} onChange={(e) => updateTime(day, slot, 'isActive', e.target.checked)} className="cursor-pointer" title="Schicht an diesem Tag aktivieren/deaktivieren" />
+                                                        <span className="text-[10px] text-slate-500">Aktiv</span>
+                                                    </div>
+                                                    <div className={`flex items-center justify-center gap-1 ${!time.isActive ? 'opacity-30' : ''}`}>
+                                                        <input type="time" disabled={!time.isActive} value={time.start} onChange={(e) => updateTime(day, slot, 'start', e.target.value)} className="bg-slate-800 text-slate-300 border border-slate-600 rounded px-1.5 py-1 w-[70px] focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 disabled:bg-slate-900" />
+                                                        <span className="text-slate-500">-</span>
+                                                        <input type="time" disabled={!time.isActive} value={time.end} onChange={(e) => updateTime(day, slot, 'end', e.target.value)} className="bg-slate-800 text-slate-300 border border-slate-600 rounded px-1.5 py-1 w-[70px] focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 disabled:bg-slate-900" />
+                                                    </div>
                                                 </div>
                                             </td>
                                         )

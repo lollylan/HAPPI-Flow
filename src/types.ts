@@ -41,6 +41,7 @@ export interface WeeklyAvailability {
 }
 
 export interface TimeRange {
+    isActive: boolean;
     start: string;
     end: string;
 }

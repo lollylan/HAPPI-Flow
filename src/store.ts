@@ -39,11 +39,11 @@ const seedWorkAreas: WorkArea[] = [
 ];
 
 const defaultSlotSettings: WeeklySlotTimes = {
-    monday: { morning: { start: '08:00', end: '12:00' }, noon: { start: '12:00', end: '14:00' }, afternoon: { start: '14:00', end: '18:00' } },
-    tuesday: { morning: { start: '08:00', end: '12:00' }, noon: { start: '12:00', end: '14:00' }, afternoon: { start: '14:00', end: '18:00' } },
-    wednesday: { morning: { start: '08:00', end: '12:00' }, noon: { start: '12:00', end: '14:00' }, afternoon: { start: '14:00', end: '18:00' } },
-    thursday: { morning: { start: '08:00', end: '12:00' }, noon: { start: '12:00', end: '14:00' }, afternoon: { start: '14:00', end: '18:00' } },
-    friday: { morning: { start: '08:00', end: '12:00' }, noon: { start: '12:00', end: '14:00' }, afternoon: { start: '14:00', end: '18:00' } },
+    monday: { morning: { isActive: true, start: '08:00', end: '12:00' }, noon: { isActive: true, start: '12:00', end: '14:00' }, afternoon: { isActive: true, start: '14:00', end: '18:00' } },
+    tuesday: { morning: { isActive: true, start: '08:00', end: '12:00' }, noon: { isActive: true, start: '12:00', end: '14:00' }, afternoon: { isActive: true, start: '14:00', end: '18:00' } },
+    wednesday: { morning: { isActive: true, start: '08:00', end: '12:00' }, noon: { isActive: true, start: '12:00', end: '14:00' }, afternoon: { isActive: true, start: '14:00', end: '18:00' } },
+    thursday: { morning: { isActive: true, start: '08:00', end: '12:00' }, noon: { isActive: true, start: '12:00', end: '14:00' }, afternoon: { isActive: true, start: '14:00', end: '18:00' } },
+    friday: { morning: { isActive: true, start: '08:00', end: '12:00' }, noon: { isActive: true, start: '12:00', end: '14:00' }, afternoon: { isActive: true, start: '14:00', end: '18:00' } },
 };
 
 function getInitialState(): AppState {
@@ -72,6 +72,17 @@ function getInitialState(): AppState {
 
             if (!data.slotSettings) {
                 data.slotSettings = defaultSlotSettings;
+            } else {
+                // Migrate to add isActive flag
+                const days: (keyof WeeklySlotTimes)[] = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'];
+                days.forEach(day => {
+                    const slots: ('morning' | 'noon' | 'afternoon')[] = ['morning', 'noon', 'afternoon'];
+                    slots.forEach(slot => {
+                        if (data.slotSettings[day] && data.slotSettings[day][slot] && data.slotSettings[day][slot].isActive === undefined) {
+                            data.slotSettings[day][slot].isActive = true;
+                        }
+                    });
+                });
             }
 
             if (data.employees) {

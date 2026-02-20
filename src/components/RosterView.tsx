@@ -135,15 +135,16 @@ export function RosterView() {
                 }
 
                 for (const slot of timeSlots) {
+                    const slotDef = slotSettings[day][slot];
+                    if (!slotDef || !slotDef.isActive) continue;
+
                     const assignedSet = assignedSets[slot];
 
                     const availableForSlot = employees.filter(emp => {
                         if (!emp.isActive) return false;
                         const avail = emp.availability[day];
                         if (!avail || !avail.isWorking) return false;
-
-                        const slotDef = slotSettings[day][slot];
-                        if (!slotDef || avail.start > slotDef.start || avail.end <= slotDef.start) return false;
+                        if (avail.start > slotDef.start || avail.end <= slotDef.start) return false;
 
                         const absStatus = getAbsenceStatus(emp.id, dateStr);
                         if (absStatus === 'approved') return false;
@@ -414,7 +415,7 @@ export function RosterView() {
                                         <td key={day} className="p-2 border-r border-slate-700/30 bg-slate-900/30 vertical-top h-32 relative">
                                             <div className="flex flex-col h-full gap-2">
                                                 {/* Morning Slot */}
-                                                {(area.operatingHours?.[day]?.includes('morning')) && (
+                                                {(area.operatingHours?.[day]?.includes('morning')) && slotSettings?.[day]?.morning?.isActive && (
                                                     <SlotCell
                                                         label="VM"
                                                         assignment={getAssignment(area.id, day, 'morning')}
@@ -427,7 +428,7 @@ export function RosterView() {
                                                 )}
 
                                                 {/* Noon Slot */}
-                                                {(area.operatingHours?.[day]?.includes('noon')) && (
+                                                {(area.operatingHours?.[day]?.includes('noon')) && slotSettings?.[day]?.noon?.isActive && (
                                                     <SlotCell
                                                         label="MI"
                                                         assignment={getAssignment(area.id, day, 'noon')}
@@ -440,7 +441,7 @@ export function RosterView() {
                                                 )}
 
                                                 {/* Afternoon Slot */}
-                                                {(area.operatingHours?.[day]?.includes('afternoon')) && (
+                                                {(area.operatingHours?.[day]?.includes('afternoon')) && slotSettings?.[day]?.afternoon?.isActive && (
                                                     <SlotCell
                                                         label="NM"
                                                         assignment={getAssignment(area.id, day, 'afternoon')}
