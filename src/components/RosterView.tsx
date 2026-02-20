@@ -1,14 +1,19 @@
 import { useState, useMemo } from 'react';
 import { useStore, store } from '../store';
 import { Assignment, WeeklyAvailability, Employee } from '../types';
-import { Sparkles, RefreshCw, X, AlertTriangle, Lock, Unlock, Plus, Trash2, User, ChevronLeft, ChevronRight, Calendar as CalendarIcon } from 'lucide-react';
+import { Sparkles, RefreshCw, X, AlertTriangle, Lock, Unlock, Plus, Trash2, User, ChevronLeft, ChevronRight, Calendar as CalendarIcon, Printer } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
+import { toJpeg } from 'html-to-image';
+import { jsPDF } from 'jspdf';
+import React from 'react';
 
 export function RosterView() {
     const { employees, workAreas, assignments, absences, slotSettings } = useStore();
     const [isGenerating, setIsGenerating] = useState(false);
     const [selectedSlot, setSelectedSlot] = useState<{ areaId: string, day: keyof WeeklyAvailability, slot: 'morning' | 'noon' | 'afternoon' } | null>(null);
     const [rosterWarnings, setRosterWarnings] = useState<string[]>([]);
+    const [isExporting, setIsExporting] = useState(false);
+    const pdfRef = React.useRef<HTMLDivElement>(null);
 
     // State for Week Selection (Default: This week's Monday)
     const [currentWeekStart, setCurrentWeekStart] = useState(() => {
@@ -343,12 +348,45 @@ export function RosterView() {
                         <span>{isGenerating ? 'Generiere...' : 'Automatisch befüllen'}</span>
                     </button>
 
+                    <button
+                        onClick={async () => {
+                            if (!pdfRef.current) return;
+                            setIsExporting(true);
+                            await new Promise(r => setTimeout(r, 400));
+                            try {
+                                const dataUrl = await toJpeg(pdfRef.current, {
+                                    quality: 0.95,
+                                    backgroundColor: '#0f172a',
+                                    pixelRatio: 2
+                                });
+
+                                const pdf = new jsPDF('l', 'mm', 'a4');
+                                const pdfWidth = pdf.internal.pageSize.getWidth();
+                                const pxWidth = pdfRef.current.scrollWidth;
+                                const pxHeight = pdfRef.current.scrollHeight;
+                                const pdfHeight = (pxHeight * pdfWidth) / pxWidth;
+
+                                pdf.addImage(dataUrl, 'JPEG', 0, 0, pdfWidth, pdfHeight);
+                                pdf.save(`Dienstplan_${weekDates.monday}.pdf`);
+                            } catch (e: any) {
+                                console.error("PDF Export failed", e);
+                                alert("Fehler beim PDF-Export aufgetreten:\n" + (e?.message || e?.toString() || "Unbekannter Fehler"));
+                            } finally {
+                                setIsExporting(false);
+                            }
+                        }}
+                        disabled={isExporting}
+                        className="p-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg border border-slate-700 transition-colors w-12 flex items-center justify-center"
+                        title="Als PDF exportieren"
+                    >
+                        {isExporting ? <RefreshCw size={20} className="animate-spin" /> : <Printer size={20} />}
+                    </button>
                     {/* Clear Week Button */}
                     <button
                         onClick={() => {
                             if (confirm('Alle Einträge dieser Woche löschen?')) {
-                                const other = assignments.filter(a => !(a.date >= weekDates.monday && a.date <= weekDates.friday));
-                                store.setAssignments(other);
+                                const otherAssignments = assignments.filter(a => !(a.date >= weekDates.monday && a.date <= weekDates.friday));
+                                store.setAssignments(otherAssignments);
                             }
                         }}
                         className="p-3 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 rounded-lg border border-rose-500/30 transition-colors"
@@ -373,8 +411,8 @@ export function RosterView() {
             )}
 
             {/* Roster Table */}
-            <div className="bg-slate-900 border border-slate-700 rounded-xl overflow-hidden shadow-xl">
-                <div className="overflow-x-auto">
+            <div ref={pdfRef} className={`${isExporting ? 'pdf-export-theme bg-white' : 'bg-slate-900'} border border-slate-700 rounded-xl shadow-xl ${isExporting ? 'overflow-visible' : 'overflow-hidden'}`}>
+                <div className={isExporting ? 'overflow-visible' : 'overflow-x-auto'}>
                     <table className="w-full">
                         <thead>
                             <tr>

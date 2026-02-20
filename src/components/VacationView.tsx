@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
 import { useStore, store } from '../store';
 import { Absence, AbsenceType, AbsenceStatus, PracticeClosure, Employee, WeeklyAvailability } from '../types';
-import { Calendar, ChevronLeft, ChevronRight, Plus, Palmtree, Thermometer, GraduationCap, HelpCircle, X, Check, Search, Clock, Home, Sparkles } from 'lucide-react';
+import { Calendar, ChevronLeft, ChevronRight, Plus, Palmtree, Thermometer, GraduationCap, HelpCircle, X, Check, Search, Clock, Home, Sparkles, Printer, RefreshCw } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
+import { toJpeg } from 'html-to-image';
+import { jsPDF } from 'jspdf';
 
 export function VacationView() {
     const { employees, absences, closures } = useStore();
@@ -11,6 +13,10 @@ export function VacationView() {
     const [editingAbsence, setEditingAbsence] = useState<Absence | null>(null);
     const [editingClosure, setEditingClosure] = useState<PracticeClosure | null>(null);
     const [isClosureForm, setIsClosureForm] = useState(false);
+
+    const [selectedView, setSelectedView] = useState<string>('all');
+    const [isExporting, setIsExporting] = useState(false);
+    const pdfRef = React.useRef<HTMLDivElement>(null);
 
     // Month Navigation
     const year = currentDate.getFullYear();
@@ -404,164 +410,356 @@ export function VacationView() {
         const used = calculateVacationDaysUsed(employee);
         const remaining = totalAvailable - used;
 
-        let colorObj = "text-slate-500";
-        if (remaining < 0) colorObj = "text-rose-400";
-        else if (remaining <= 5) colorObj = "text-amber-400";
-        else colorObj = "text-emerald-400";
+        let colorClass = "text-slate-500";
+        let bgClass = "bg-transparent";
+        let isNegative = false;
+
+        if (remaining < 0) {
+            colorClass = "text-rose-100";
+            bgClass = "bg-rose-600 shadow-md";
+            isNegative = true;
+        } else if (remaining <= 5) {
+            colorClass = "text-amber-400";
+        } else {
+            colorClass = "text-emerald-400";
+        }
 
         return (
-            <div className="flex flex-col items-end shrink-0" title={`Urlaubsanspruch: ${totalAvailable} (${employee.vacationDaysTotal} + ${employee.vacationDaysCarryover} Übertrag)\nGenommen/Geplant: ${used} (${remaining} übrig)`}>
-                <span className={`text-[10px] font-bold ${colorObj}`}>{remaining} / {totalAvailable}</span>
-                <span className="text-[8px] uppercase tracking-widest text-slate-500 opacity-60 mt-[1px]">Tage</span>
+            <div className={`flex flex-col items-end shrink-0 px-2 py-0.5 rounded ${bgClass}`} title={`Urlaubsanspruch: ${totalAvailable} (${employee.vacationDaysTotal} + ${employee.vacationDaysCarryover} Übertrag)\nGenommen/Geplant: ${used} (${remaining} übrig)`}>
+                <span className={`text-[11px] font-bold ${colorClass}`}>{remaining} / {totalAvailable}</span>
+                <span className={`text-[8px] uppercase tracking-widest ${isNegative ? 'text-rose-200' : 'text-slate-500 opacity-60'} mt-[1px]`}>Tage</span>
             </div>
         )
     }
 
+    const exportPDF = async () => {
+        if (!pdfRef.current) return;
+        setIsExporting(true);
+        // Let React re-render without overflow hidden and wait for layout paint
+        await new Promise(r => setTimeout(r, 400));
+
+        try {
+            const dataUrl = await toJpeg(pdfRef.current, {
+                quality: 0.95,
+                backgroundColor: '#ffffff',
+                pixelRatio: 2
+            });
+
+            const pdf = new jsPDF('l', 'mm', 'a4');
+            const pdfWidth = pdf.internal.pageSize.getWidth();
+            const pxWidth = pdfRef.current.scrollWidth;
+            const pxHeight = pdfRef.current.scrollHeight;
+            const pdfHeight = (pxHeight * pdfWidth) / pxWidth;
+
+            pdf.addImage(dataUrl, 'JPEG', 0, 0, pdfWidth, pdfHeight);
+            const employeeName = selectedView !== 'all' ? (employees.find(e => e.id === selectedView)?.lastName || '') : 'Alle';
+            pdf.save(`Urlaubsplan_${year}_${employeeName}.pdf`);
+        } catch (e: any) {
+            console.error("PDF Export failed", e);
+            alert("Fehler beim PDF-Export aufgetreten:\n" + (e?.message || e?.toString() || "Unbekannter Fehler"));
+        } finally {
+            setIsExporting(false);
+        }
+    };
+
     return (
-        <div className="animate-fade-in h-screen flex flex-col p-6 absolute inset-0 overflow-hidden">
+        <div className="animate-fade-in flex flex-col h-full overflow-hidden pb-20">
             <div className="flex items-center justify-between mb-6 shrink-0">
                 <div>
                     <h2 className="text-2xl font-bold text-white mb-1">Urlaubsplanung</h2>
                     <p className="text-slate-400 text-sm">Abwesenheiten verwalten</p>
                 </div>
                 <div className="flex gap-4">
+                    <select
+                        className="bg-slate-800 rounded-lg p-2 text-sm text-slate-200 border border-slate-700 outline-none"
+                        value={selectedView}
+                        onChange={(e) => setSelectedView(e.target.value)}
+                        disabled={isExporting}
+                    >
+                        <option value="all">Monatsansicht (Alle Mitarbeiter)</option>
+                        {employees.map(emp => (
+                            <option key={emp.id} value={emp.id}>Jahresansicht ({emp.firstName} {emp.lastName})</option>
+                        ))}
+                    </select>
+
                     <div className="flex items-center gap-2 bg-slate-800 rounded-lg p-1 border border-slate-700">
-                        <button onClick={prevMonth} className="p-1 hover:bg-slate-700 rounded text-slate-400 hover:text-white"><ChevronLeft size={20} /></button>
-                        <span className="w-40 text-center font-medium text-slate-200">{monthLabel}</span>
-                        <button onClick={nextMonth} className="p-1 hover:bg-slate-700 rounded text-slate-400 hover:text-white"><ChevronRight size={20} /></button>
+                        <button onClick={() => selectedView === 'all' ? prevMonth() : setCurrentDate(new Date(year - 1, month, 1))} className="p-1 hover:bg-slate-700 rounded text-slate-400 hover:text-white"><ChevronLeft size={20} /></button>
+                        <span className="w-40 text-center font-medium text-slate-200">
+                            {selectedView === 'all' ? monthLabel : `Jahr ${year}`}
+                        </span>
+                        <button onClick={() => selectedView === 'all' ? nextMonth() : setCurrentDate(new Date(year + 1, month, 1))} className="p-1 hover:bg-slate-700 rounded text-slate-400 hover:text-white"><ChevronRight size={20} /></button>
                     </div>
-                    {closures.length > 0 && (
-                        <button onClick={autoPlanAllClosures} className="btn bg-indigo-500/20 text-indigo-400 border border-indigo-500/50 hover:bg-indigo-500/30 flex items-center gap-2">
+                    {closures.length > 0 && selectedView === 'all' && (
+                        <button onClick={autoPlanAllClosures} disabled={isExporting} className="btn bg-indigo-500/20 text-indigo-400 border border-indigo-500/50 hover:bg-indigo-500/30 flex items-center gap-2">
                             <Sparkles size={18} /> Alle Schließzeiten verteilen
                         </button>
                     )}
-                    <button onClick={openCreate} className="btn btn-primary flex items-center gap-2">
+                    <button onClick={exportPDF} disabled={isExporting} className="btn border border-slate-700 text-slate-300 hover:bg-slate-800 flex items-center gap-2 w-32 justify-center" title="Als PDF exportieren">
+                        {isExporting ? (
+                            <span className="flex items-center gap-2"><RefreshCw size={16} className="animate-spin" /> Lädt...</span>
+                        ) : (
+                            <span className="flex items-center gap-2"><Printer size={16} /> Export</span>
+                        )}
+                    </button>
+                    <button onClick={openCreate} disabled={isExporting} className="btn btn-primary flex items-center gap-2">
                         <Plus size={18} /> Neuer Antrag
                     </button>
                 </div>
             </div>
 
             {/* Gantt Chart Container */}
-            <div className="bg-slate-900/50 border border-slate-700/50 rounded-xl flex-1 flex flex-col overflow-hidden">
-                {/* Header Row */}
-                <div className="flex border-b border-slate-700/50 bg-slate-900 z-20">
-                    <div className="w-56 p-4 text-xs font-bold text-slate-400 uppercase tracking-wider shrink-0 border-r border-slate-700/50 bg-slate-900 sticky left-0 z-30">
-                        Mitarbeiter
-                    </div>
-                    <div className="flex-1 flex overflow-hidden">
-                        {days.map(d => (
-                            <div key={d.date} className={`flex-1 min-w-[30px] border-r border-slate-800/50 flex flex-col items-center justify-center py-2 ${d.isWeekend ? 'bg-slate-800/30' : ''}`}>
-                                <span className={`text-[10px] font-bold ${d.isWeekend ? 'text-rose-400' : 'text-slate-400'}`}>{d.dayOfWeek}</span>
-                                <span className={`text-sm font-medium ${d.isWeekend ? 'text-rose-200' : 'text-slate-200'}`}>{d.date}</span>
+            <div ref={pdfRef} className={`${isExporting ? 'pdf-export-theme bg-white' : 'bg-slate-900/50'} border border-slate-700/50 rounded-xl flex-1 flex flex-col ${isExporting ? 'overflow-visible h-auto max-h-none' : 'overflow-hidden'}`}>
+                {selectedView === 'all' ? (
+                    <>
+                        {/* PDF Header for Month View */}
+                        {isExporting && (
+                            <div className="bg-white border-b border-slate-700/50 flex justify-between items-center px-8 pb-4 pt-6">
+                                <div>
+                                    <h2 className="text-3xl font-black text-slate-800 tracking-tight">Urlaubsplan</h2>
+                                    <div className="text-slate-500 font-medium text-lg mt-1">{monthLabel}</div>
+                                </div>
+                                <div className="text-right">
+                                    <div className="text-sm font-bold text-slate-400 uppercase tracking-widest bg-slate-100 px-3 py-1 rounded inline-block mb-1">HÄPPI-Flow</div>
+                                    <div className="text-xs text-slate-500">Druckdatum: {new Date().toLocaleDateString('de-DE')}</div>
+                                </div>
                             </div>
-                        ))}
-                    </div>
-                </div>
-
-                {/* Rows Scrollable Area */}
-                <div className="overflow-y-auto overflow-x-hidden flex-1 custom-scrollbar">
-                    {/* Praxis Closure Row */}
-                    <div className="flex border-b border-slate-700/50 hover:bg-slate-700/20 transition-colors h-10 group relative bg-indigo-900/10">
-                        <div className="absolute inset-0 pointer-events-none group-hover:bg-indigo-900/20 z-0"></div>
-                        <div className="w-56 px-4 flex items-center gap-3 shrink-0 border-r border-slate-700/50 sticky left-0 z-10 bg-indigo-900/40 group-hover:bg-indigo-900/60 transition-colors">
-                            <div className="w-6 h-6 rounded-full flex items-center justify-center bg-indigo-500/20 text-indigo-400 text-sm">🏥</div>
-                            <span className="text-sm truncate font-bold text-indigo-300">Praxisschließzeiten</span>
-                        </div>
-                        <div className="flex-1 relative overflow-hidden">
-                            <div className="absolute inset-0 flex items-center justify-center text-4xl font-black text-indigo-300/5 pointer-events-none tracking-[0.5em] uppercase whitespace-nowrap z-0 selection:bg-transparent">
-                                PRAXISSCHLIESSZEITEN
+                        )}
+                        {/* Header Row */}
+                        <div className="flex border-b border-slate-700/50 bg-slate-900 z-20">
+                            <div className="w-56 p-4 text-xs font-bold text-slate-400 uppercase tracking-wider shrink-0 border-r border-slate-700/50 bg-slate-900 sticky left-0 z-30">
+                                Mitarbeiter
                             </div>
-                            <div className="absolute inset-0 flex z-0">
+                            <div className="flex-1 flex overflow-hidden">
                                 {days.map(d => (
-                                    <div
-                                        key={d.date}
-                                        onClick={() => openCreateForDate('praxis', d.iso)}
-                                        title={`Klick: Neue Praxisschließzeit am ${d.date}.${month + 1}.`}
-                                        className={`flex-1 border-r border-slate-800/50 cursor-pointer hover:bg-white/5 transition-colors ${d.isWeekend ? 'bg-slate-800/20' : ''}`}
-                                    />
+                                    <div key={d.date} className={`flex-1 min-w-[30px] border-r border-slate-800/50 flex flex-col items-center justify-center py-2 ${d.isWeekend ? 'bg-slate-800/30' : ''}`}>
+                                        <span className={`text-[10px] font-bold ${d.isWeekend ? 'text-rose-400' : 'text-slate-400'}`}>{d.dayOfWeek}</span>
+                                        <span className={`text-sm font-medium ${d.isWeekend ? 'text-rose-200' : 'text-slate-200'}`}>{d.date}</span>
+                                    </div>
                                 ))}
                             </div>
-                            {closures.map(closure => {
-                                const style = getClosureStyle(closure);
-                                if (!style) return null;
-                                return (
-                                    <div
-                                        key={closure.id}
-                                        style={{ left: style.left, width: style.width }}
-                                        className={style.className}
-                                        onClick={() => openEditClosure(closure)}
-                                        title={`Praxisschließzeit: ${closure.description}\n${new Date(closure.startDate).toLocaleDateString()} - ${new Date(closure.endDate).toLocaleDateString()}`}
-                                    >
-                                        {style.icon}
-                                        <span className="truncate flex-1">Praxis geschlossen</span>
-                                    </div>
-                                );
-                            })}
                         </div>
-                    </div>
 
-                    {/* Employee Rows */}
-                    {employees.filter(e => e.isActive).map((emp, idx) => (
-                        <div key={emp.id} className={`flex border-b border-slate-700/30 hover:bg-slate-700/20 transition-colors h-10 group relative ${idx % 2 === 0 ? 'bg-slate-800/10' : ''}`}>
-                            {/* Hover Guide - helps to see which row you are tracking */}
-                            <div className="absolute inset-0 pointer-events-none group-hover:bg-slate-600/10 z-0"></div>
-
-                            {/* Name Column */}
-                            <div className={`w-56 px-4 flex items-center justify-between shrink-0 border-r border-slate-700/50 sticky left-0 z-10 transition-colors bg-slate-900/95 group-hover:bg-slate-800/95`}>
-                                <div className="flex items-center gap-2 truncate">
-                                    <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold bg-slate-800 text-slate-400 shrink-0`}>
-                                        {emp.firstName[0]}{emp.lastName[0]}
+                        {/* Rows Scrollable Area */}
+                        <div className="overflow-y-auto overflow-x-hidden flex-1 custom-scrollbar">
+                            {/* Praxis Closure Row */}
+                            <div className="flex border-b border-slate-700/50 hover:bg-slate-700/20 transition-colors h-10 group relative bg-indigo-900/10">
+                                <div className="absolute inset-0 pointer-events-none group-hover:bg-indigo-900/20 z-0"></div>
+                                <div className="w-56 px-4 flex items-center gap-3 shrink-0 border-r border-slate-700/50 sticky left-0 z-10 bg-indigo-900/40 group-hover:bg-indigo-900/60 transition-colors">
+                                    <div className="w-6 h-6 rounded-full flex items-center justify-center bg-indigo-500/20 text-indigo-400 text-sm">🏥</div>
+                                    <span className="text-sm truncate font-bold text-indigo-300">Praxisschließzeiten</span>
+                                </div>
+                                <div className="flex-1 relative overflow-hidden">
+                                    <div className={`absolute inset-0 ${isExporting ? 'hidden' : 'flex'} items-center justify-center text-4xl font-black text-indigo-300/5 pointer-events-none tracking-[0.5em] uppercase whitespace-nowrap z-0 selection:bg-transparent`}>
+                                        PRAXISSCHLIESSZEITEN
                                     </div>
-                                    <span className="text-sm truncate text-slate-300">
-                                        {emp.firstName} {emp.lastName}
-                                    </span>
-                                </div>
-                                {renderVacationCounter(emp)}
-                            </div>
-
-                            {/* Timeline Columns */}
-                            <div className="flex-1 relative overflow-hidden">
-                                {/* Watermark */}
-                                <div className="absolute inset-0 flex items-center justify-center text-4xl font-black text-slate-300/5 pointer-events-none tracking-[0.5em] uppercase whitespace-nowrap z-0 selection:bg-transparent">
-                                    {emp.firstName} {emp.lastName}
-                                </div>
-
-                                {/* Grid Lines Background and Interaction */}
-                                <div className="absolute inset-0 flex z-0">
-                                    {days.map(d => (
-                                        <div
-                                            key={d.date}
-                                            onClick={() => openCreateForDate(emp.id, d.iso)}
-                                            title={`Klick: Neuer Eintrag für ${emp.id === 'praxis' ? 'Praxisurlaub' : emp.firstName} am ${d.date}.${month + 1}.`}
-                                            className={`flex-1 border-r border-slate-800/50 cursor-pointer hover:bg-white/5 transition-colors ${d.isWeekend ? 'bg-slate-800/20' : ''}`}
-                                        />
-                                    ))}
-                                </div>
-
-                                {/* Bars */}
-                                {absences
-                                    .filter(a => a.employeeId === emp.id)
-                                    .map(absence => {
-                                        const style = getAbsenceStyle(absence);
+                                    <div className="absolute inset-0 flex z-0">
+                                        {days.map(d => (
+                                            <div
+                                                key={d.date}
+                                                onClick={() => openCreateForDate('praxis', d.iso)}
+                                                title={`Klick: Neue Praxisschließzeit am ${d.date}.${month + 1}.`}
+                                                className={`flex-1 border-r border-slate-800/50 cursor-pointer hover:bg-white/5 transition-colors ${d.isWeekend ? 'bg-slate-800/20' : ''}`}
+                                            />
+                                        ))}
+                                    </div>
+                                    {closures.map(closure => {
+                                        const style = getClosureStyle(closure);
                                         if (!style) return null;
                                         return (
                                             <div
-                                                key={absence.id}
+                                                key={closure.id}
                                                 style={{ left: style.left, width: style.width }}
                                                 className={style.className}
-                                                onClick={() => openEdit(absence)}
-                                                title={`${emp.firstName} (${absence.status === 'requested' ? 'Wunsch' : 'Fest'}): ${absence.notes || (absence.type === 'vacation' ? 'Urlaub' : absence.type === 'sick' ? 'Krank' : absence.type === 'overtime' ? 'Überstundenabbau' : 'Fortbildung')}\n${new Date(absence.startDate).toLocaleDateString()} - ${new Date(absence.endDate).toLocaleDateString()}`}
+                                                onClick={() => openEditClosure(closure)}
+                                                title={`Praxisschließzeit: ${closure.description}\n${new Date(closure.startDate).toLocaleDateString()} - ${new Date(closure.endDate).toLocaleDateString()}`}
                                             >
                                                 {style.icon}
-                                                <span className="truncate flex-1">{(absence.status === 'requested' ? 'Wunsch: ' : '') + (absence.type === 'vacation' ? 'Urlaub' : absence.type === 'sick' ? 'Krank' : absence.type === 'overtime' ? 'Überstunden' : 'Fortbildung')}</span>
+                                                <span className="truncate flex-1">Praxis geschlossen</span>
                                             </div>
                                         );
-                                    })
-                                }
+                                    })}
+                                </div>
+                            </div>
+
+                            {/* Employee Rows */}
+                            {employees.filter(e => e.isActive).map((emp, idx) => (
+                                <div key={emp.id} className={`flex border-b border-slate-700/30 hover:bg-slate-700/20 transition-colors h-10 group relative ${idx % 2 === 0 ? 'bg-slate-800/10' : ''}`}>
+                                    {/* Hover Guide - helps to see which row you are tracking */}
+                                    <div className="absolute inset-0 pointer-events-none group-hover:bg-slate-600/10 z-0"></div>
+
+                                    {/* Name Column */}
+                                    <div className={`w-56 px-4 flex items-center justify-between shrink-0 border-r border-slate-700/50 sticky left-0 z-10 transition-colors bg-slate-900/95 group-hover:bg-slate-800/95`}>
+                                        <div className="flex items-center gap-2 truncate">
+                                            <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold bg-slate-800 text-slate-400 shrink-0`}>
+                                                {emp.firstName[0]}{emp.lastName[0]}
+                                            </div>
+                                            <span className="text-sm truncate text-slate-300">
+                                                {emp.firstName} {emp.lastName}
+                                            </span>
+                                        </div>
+                                        {renderVacationCounter(emp)}
+                                    </div>
+
+                                    {/* Timeline Columns */}
+                                    <div className="flex-1 relative overflow-hidden">
+                                        {/* Watermark */}
+                                        <div className={`absolute inset-0 ${isExporting ? 'hidden' : 'flex'} items-center justify-center text-4xl font-black text-slate-300/5 pointer-events-none tracking-[0.5em] uppercase whitespace-nowrap z-0 selection:bg-transparent`}>
+                                            {emp.firstName} {emp.lastName}
+                                        </div>
+
+                                        {/* Grid Lines Background and Interaction */}
+                                        <div className="absolute inset-0 flex z-0">
+                                            {days.map(d => (
+                                                <div
+                                                    key={d.date}
+                                                    onClick={() => openCreateForDate(emp.id, d.iso)}
+                                                    title={`Klick: Neuer Eintrag für ${emp.id === 'praxis' ? 'Praxisurlaub' : emp.firstName} am ${d.date}.${month + 1}.`}
+                                                    className={`flex-1 border-r border-slate-800/50 cursor-pointer hover:bg-white/5 transition-colors ${d.isWeekend ? 'bg-slate-800/20' : ''}`}
+                                                />
+                                            ))}
+                                        </div>
+
+                                        {/* Bars */}
+                                        {absences
+                                            .filter(a => a.employeeId === emp.id)
+                                            .map(absence => {
+                                                const style = getAbsenceStyle(absence);
+                                                if (!style) return null;
+                                                return (
+                                                    <div
+                                                        key={absence.id}
+                                                        style={{ left: style.left, width: style.width }}
+                                                        className={style.className}
+                                                        onClick={() => openEdit(absence)}
+                                                        title={`${emp.firstName} (${absence.status === 'requested' ? 'Wunsch' : 'Fest'}): ${absence.notes || (absence.type === 'vacation' ? 'Urlaub' : absence.type === 'sick' ? 'Krank' : absence.type === 'overtime' ? 'Überstundenabbau' : 'Fortbildung')}\n${new Date(absence.startDate).toLocaleDateString()} - ${new Date(absence.endDate).toLocaleDateString()}`}
+                                                    >
+                                                        {style.icon}
+                                                        <span className="truncate flex-1">{(absence.status === 'requested' ? 'Wunsch: ' : '') + (absence.type === 'vacation' ? 'Urlaub' : absence.type === 'sick' ? 'Krank' : absence.type === 'overtime' ? 'Überstunden' : 'Fortbildung')}</span>
+                                                    </div>
+                                                );
+                                            })
+                                        }
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </>
+                ) : (
+                    /* YEAR VIEW FOR SINGLE EMPLOYEE */
+                    <div className={`flex flex-col flex-1 ${isExporting ? 'overflow-visible' : 'overflow-x-auto overflow-y-hidden'}`}>
+                        <div className="flex flex-col flex-1 min-w-[1024px]">
+                            {/* PDF Header for Year View */}
+                            {isExporting && (
+                                <div className="bg-white border-b border-slate-700/50 flex justify-between items-center px-8 pb-4 pt-6">
+                                    <div>
+                                        <h2 className="text-3xl font-black text-slate-800 tracking-tight">Urlaubsplan {year}</h2>
+                                        <div className="text-slate-500 font-medium text-lg mt-1">
+                                            {employees.find(e => e.id === selectedView)?.firstName} {employees.find(e => e.id === selectedView)?.lastName}
+                                        </div>
+                                    </div>
+                                    <div className="text-right">
+                                        <div className="text-sm font-bold text-slate-400 uppercase tracking-widest bg-slate-100 px-3 py-1 rounded inline-block mb-1">HÄPPI-Flow</div>
+                                        <div className="text-xs text-slate-500">Druckdatum: {new Date().toLocaleDateString('de-DE')}</div>
+                                    </div>
+                                </div>
+                            )}
+                            <div className="flex border-b border-slate-700/50 bg-slate-900 z-20">
+                                <div className="w-40 p-4 text-xs font-bold text-slate-400 uppercase tracking-wider shrink-0 border-r border-slate-700/50 bg-slate-900 sticky left-0 z-30">
+                                    Monat
+                                </div>
+                                <div className="flex-1 flex overflow-hidden">
+                                    {Array.from({ length: 31 }, (_, i) => (
+                                        <div key={i} className="flex-1 min-w-[30px] border-r border-slate-800/50 flex flex-col items-center justify-center py-2">
+                                            <span className="text-[10px] font-bold text-slate-400">{i + 1}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                            <div className={`flex-1 ${isExporting ? 'overflow-visible' : 'overflow-y-auto overflow-x-hidden custom-scrollbar'}`}>
+                                {Array.from({ length: 12 }, (_, m) => {
+                                    const mmName = new Date(year, m, 1).toLocaleDateString('de-DE', { month: 'long' });
+                                    const dInMonth = new Date(year, m + 1, 0).getDate();
+                                    const empAbsences = absences.filter(a => a.employeeId === selectedView);
+
+                                    return (
+                                        <div key={m} className={`flex border-b border-slate-700/30 hover:bg-slate-700/20 transition-colors h-10 group relative ${m % 2 === 0 ? 'bg-slate-800/10' : ''}`}>
+                                            <div className="absolute inset-0 pointer-events-none group-hover:bg-slate-600/10 z-0"></div>
+                                            <div className={`w-40 px-4 flex items-center gap-3 shrink-0 border-r border-slate-700/50 sticky left-0 z-10 transition-colors bg-slate-900/95 group-hover:bg-slate-800/95`}>
+                                                <span className="text-sm truncate text-slate-300 font-medium">
+                                                    {mmName}
+                                                </span>
+                                            </div>
+                                            <div className="flex-1 relative overflow-hidden">
+                                                {/* Grid Lines */}
+                                                <div className="absolute inset-0 flex z-0">
+                                                    {Array.from({ length: 31 }, (_, dayIndex) => {
+                                                        const isValid = dayIndex < dInMonth;
+                                                        const d = isValid ? new Date(year, m, dayIndex + 1) : null;
+                                                        const isWe = d ? (d.getDay() === 0 || d.getDay() === 6) : false;
+                                                        const iso = d ? `${year}-${String(m + 1).padStart(2, '0')}-${String(dayIndex + 1).padStart(2, '0')}` : '';
+
+                                                        return (
+                                                            <div
+                                                                key={dayIndex}
+                                                                onClick={() => isValid && openCreateForDate(selectedView, iso)}
+                                                                className={`flex-1 border-r border-slate-800/50 ${!isValid ? 'bg-slate-800/80 pointer-events-none' : isWe ? 'bg-slate-800/20' : 'cursor-pointer hover:bg-white/5 transition-colors'}`}
+                                                            />
+                                                        );
+                                                    })}
+                                                </div>
+
+                                                {/* Bars */}
+                                                {empAbsences.map(absence => {
+                                                    const mStart = new Date(year, m, 1);
+                                                    const mEnd = new Date(year, m, dInMonth);
+                                                    const aStart = new Date(absence.startDate);
+                                                    const aEnd = new Date(absence.endDate);
+                                                    const dispStart = aStart < mStart ? mStart : aStart;
+                                                    const dispEnd = aEnd > mEnd ? mEnd : aEnd;
+
+                                                    if (dispStart > dispEnd) return null;
+
+                                                    const sDay = dispStart.getDate();
+                                                    const eDay = dispEnd.getDate();
+                                                    const dur = eDay - sDay + 1;
+
+                                                    let bg = 'bg-slate-600';
+                                                    let border = 'border-slate-500';
+                                                    let text = 'text-slate-200';
+                                                    let icon = <HelpCircle size={10} />;
+
+                                                    switch (absence.type) {
+                                                        case 'vacation': bg = 'bg-emerald-500/20'; border = 'border-emerald-500/50'; text = 'text-emerald-400'; icon = <Palmtree size={10} />; break;
+                                                        case 'sick': bg = 'bg-rose-500/20'; border = 'border-rose-500/50'; text = 'text-rose-400'; icon = <Thermometer size={10} />; break;
+                                                        case 'training': bg = 'bg-blue-500/20'; border = 'border-blue-500/50'; text = 'text-blue-400'; icon = <GraduationCap size={10} />; break;
+                                                        case 'overtime': bg = 'bg-amber-500/20'; border = 'border-amber-500/50'; text = 'text-amber-400'; icon = <Clock size={10} />; break;
+                                                    }
+                                                    let extra = '';
+                                                    if (absence.status === 'requested') extra = 'opacity-80 border-dashed border-2 bg-stripes';
+
+                                                    return (
+                                                        <div
+                                                            key={absence.id}
+                                                            style={{ left: `${(sDay - 1) * 100 / 31}%`, width: `${dur * 100 / 31}%` }}
+                                                            className={`absolute top-1 h-6 rounded ${bg} border ${border} ${text} text-[10px] flex items-center gap-1 px-1 overflow-hidden whitespace-nowrap z-10 hover:brightness-110 cursor-pointer ${extra}`}
+                                                            onClick={() => openEdit(absence)}
+                                                            title={`${(absence.status === 'requested' ? 'Wunsch: ' : '') + (absence.type === 'vacation' ? 'Urlaub' : absence.type === 'sick' ? 'Krank' : absence.type === 'overtime' ? 'Überstunden' : 'Fortbildung')}\n${absence.notes ? absence.notes + '\n' : ''}${new Date(absence.startDate).toLocaleDateString()} - ${new Date(absence.endDate).toLocaleDateString()}`}
+                                                        >
+                                                            {icon}
+                                                            <span className="truncate flex-1">
+                                                                {(absence.status === 'requested' ? 'Wunsch: ' : '') + (absence.type === 'vacation' ? 'Urlaub' : absence.type === 'sick' ? 'Krank' : absence.type === 'overtime' ? 'Überstunden' : 'Fortbildung')}
+                                                            </span>
+                                                        </div>
+                                                    )
+                                                })}
+                                            </div>
+                                        </div>
+                                    );
+                                })}
                             </div>
                         </div>
-                    ))}
-                </div>
+                    </div>
+                )}
             </div>
 
             {/* Modal */}
