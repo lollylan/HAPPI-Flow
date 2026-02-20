@@ -1,10 +1,11 @@
 import { useState, useMemo } from 'react';
 import { useStore, store } from '../store';
 import { Assignment, WeeklyAvailability, Employee } from '../types';
-import { Sparkles, RefreshCw, X, AlertTriangle, Lock, Unlock, Plus, Trash2, User, ChevronLeft, ChevronRight, Calendar as CalendarIcon, Printer } from 'lucide-react';
+import { Sparkles, RefreshCw, X, AlertTriangle, Lock, Unlock, Plus, Trash2, User, ChevronLeft, ChevronRight, Calendar as CalendarIcon, Printer, Filter } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import { toJpeg } from 'html-to-image';
 import { jsPDF } from 'jspdf';
+import { useAuth } from '../AuthContext';
 import React from 'react';
 
 export function RosterView() {
@@ -14,6 +15,10 @@ export function RosterView() {
     const [rosterWarnings, setRosterWarnings] = useState<string[]>([]);
     const [isExporting, setIsExporting] = useState(false);
     const pdfRef = React.useRef<HTMLDivElement>(null);
+
+    const { role, employeeId } = useAuth();
+    const isEmployee = role === 'employee';
+    const [viewMode, setViewMode] = useState<'all' | 'me'>(isEmployee ? 'me' : 'all');
 
     // State for Week Selection (Default: This week's Monday)
     const [currentWeekStart, setCurrentWeekStart] = useState(() => {
@@ -102,7 +107,8 @@ export function RosterView() {
         return currentAssignments.find(a =>
             a.workAreaId === areaId &&
             a.timeSlot === slot &&    // Match Slot
-            (a.date === date)         // Match Date
+            (a.date === date) &&      // Match Date
+            (viewMode === 'all' || a.employeeId === employeeId) // filter for "me" mode
         );
     }
 
@@ -339,14 +345,29 @@ export function RosterView() {
                         <button onClick={nextWeek} className="p-2 hover:bg-slate-700 rounded text-slate-400 hover:text-white"><ChevronRight size={20} /></button>
                     </div>
 
-                    <button
-                        onClick={generateRoster}
-                        disabled={isGenerating}
-                        className={`btn btn-primary flex items-center gap-2 ${isGenerating ? 'opacity-50 cursor-wait' : ''}`}
-                    >
-                        {isGenerating ? <RefreshCw className="animate-spin" size={20} /> : <Sparkles size={20} />}
-                        <span>{isGenerating ? 'Generiere...' : 'Automatisch befüllen'}</span>
-                    </button>
+                    {isEmployee && (
+                        <div className="flex bg-slate-800 rounded-lg p-1 border border-slate-700">
+                            <button
+                                onClick={() => setViewMode('all')}
+                                className={`px-4 py-2 text-xs font-semibold rounded-md transition-colors ${viewMode === 'all' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+                            >Gesamtansicht</button>
+                            <button
+                                onClick={() => setViewMode('me')}
+                                className={`px-4 py-2 text-xs font-semibold rounded-md transition-colors ${viewMode === 'me' ? 'bg-primary-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+                            >Meine Woche</button>
+                        </div>
+                    )}
+
+                    {!isEmployee && (
+                        <button
+                            onClick={generateRoster}
+                            disabled={isGenerating}
+                            className={`btn btn-primary flex items-center gap-2 ${isGenerating ? 'opacity-50 cursor-wait' : ''}`}
+                        >
+                            {isGenerating ? <RefreshCw className="animate-spin" size={20} /> : <Sparkles size={20} />}
+                            <span>{isGenerating ? 'Generiere...' : 'Automatisch befüllen'}</span>
+                        </button>
+                    )}
 
                     <button
                         onClick={async () => {
@@ -382,18 +403,20 @@ export function RosterView() {
                         {isExporting ? <RefreshCw size={20} className="animate-spin" /> : <Printer size={20} />}
                     </button>
                     {/* Clear Week Button */}
-                    <button
-                        onClick={() => {
-                            if (confirm('Alle Einträge dieser Woche löschen?')) {
-                                const otherAssignments = assignments.filter(a => !(a.date >= weekDates.monday && a.date <= weekDates.friday));
-                                store.setAssignments(otherAssignments);
-                            }
-                        }}
-                        className="p-3 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 rounded-lg border border-rose-500/30 transition-colors"
-                        title="Woche leeren"
-                    >
-                        <Trash2 size={20} />
-                    </button>
+                    {!isEmployee && (
+                        <button
+                            onClick={() => {
+                                if (confirm('Alle Einträge dieser Woche löschen?')) {
+                                    const otherAssignments = assignments.filter(a => !(a.date >= weekDates.monday && a.date <= weekDates.friday));
+                                    store.setAssignments(otherAssignments);
+                                }
+                            }}
+                            className="p-3 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 rounded-lg border border-rose-500/30 transition-colors"
+                            title="Woche leeren"
+                        >
+                            <Trash2 size={20} />
+                        </button>
+                    )}
                 </div>
             </div>
 
@@ -416,15 +439,15 @@ export function RosterView() {
                     <table className="w-full">
                         <thead>
                             <tr>
-                                <th className="p-4 border-b border-slate-700/50 text-slate-400 font-medium text-xs uppercase tracking-wider min-w-[200px] w-[200px] bg-slate-900 sticky left-0 z-20">Arbeitsbereich</th>
+                                <th className={`p-4 border-b border-slate-700/50 ${isExporting ? 'text-slate-800 bg-white' : 'text-slate-400 bg-slate-900'} font-medium text-xs uppercase tracking-wider min-w-[200px] w-[200px] sticky left-0 z-20`}>Arbeitsbereich</th>
                                 {days.map(day => {
                                     const date = new Date(weekDates[day]);
                                     const isToday = new Date().toISOString().split('T')[0] === weekDates[day];
                                     return (
-                                        <th key={day} className={`p-4 border-b border-slate-700/50 font-medium text-xs uppercase tracking-wider min-w-[180px] ${isToday ? 'bg-blue-500/10 text-blue-400' : 'bg-slate-900 text-slate-400'}`}>
+                                        <th key={day} className={`p-4 border-b border-slate-700/50 font-medium text-xs uppercase tracking-wider min-w-[180px] ${isToday ? (isExporting ? 'bg-blue-50 text-blue-800' : 'bg-blue-500/10 text-blue-400') : (isExporting ? 'bg-white text-slate-800' : 'bg-slate-900 text-slate-400')}`}>
                                             <div className="flex flex-col gap-1 items-center">
                                                 <span>{DAY_LABELS[day]}</span>
-                                                <span className={`${isToday ? 'text-blue-300 font-bold' : 'opacity-50'}`}>{date.getDate()}.{date.getMonth() + 1}.</span>
+                                                <span className={`${isToday ? (isExporting ? 'text-blue-800 font-bold' : 'text-blue-300 font-bold') : 'opacity-50'}`}>{date.getDate()}.{date.getMonth() + 1}.</span>
                                             </div>
                                         </th>
                                     );
@@ -434,13 +457,13 @@ export function RosterView() {
                         <tbody className="divide-y divide-slate-800">
                             {workAreas.map(area => (
                                 <tr key={area.id} className="hover:bg-slate-800/30 transition-colors group">
-                                    <td className="p-4 border-r border-slate-700/50 sticky left-0 bg-slate-900 group-hover:bg-slate-900 z-10">
+                                    <td className={`p-4 border-r border-slate-700/50 sticky left-0 ${isExporting ? 'bg-white group-hover:bg-slate-50' : 'bg-slate-900 group-hover:bg-slate-900'} z-10`}>
                                         <div className="flex items-center gap-3">
                                             <div className="w-10 h-10 rounded-lg flex items-center justify-center text-xl shadow-inner" style={{ backgroundColor: `${area.color}20`, color: area.color }}>
                                                 {area.icon}
                                             </div>
                                             <div>
-                                                <div className="font-bold text-slate-200">{area.name}</div>
+                                                <div className={`font-bold ${isExporting ? 'text-slate-800' : 'text-slate-200'}`}>{area.name}</div>
                                                 {area.isCritical && (
                                                     <div className="flex items-center gap-1 text-[10px] text-rose-400 mt-1 font-medium bg-rose-500/10 px-1.5 py-0.5 rounded w-fit">
                                                         <AlertTriangle size={10} /> Kritisch
@@ -450,7 +473,7 @@ export function RosterView() {
                                         </div>
                                     </td>
                                     {days.map(day => (
-                                        <td key={day} className="p-2 border-r border-slate-700/30 bg-slate-900/30 vertical-top h-32 relative">
+                                        <td key={day} className={`p-2 border-r border-slate-700/30 ${isExporting ? 'bg-slate-50' : 'bg-slate-900/30'} vertical-top h-32 relative`}>
                                             <div className="flex flex-col h-full gap-2">
                                                 {/* Morning Slot */}
                                                 {(area.operatingHours?.[day]?.includes('morning')) && slotSettings?.[day]?.morning?.isActive && (
@@ -459,6 +482,7 @@ export function RosterView() {
                                                         assignment={getAssignment(area.id, day, 'morning')}
                                                         employees={employees}
                                                         isCritical={area.isCritical}
+                                                        isEmployee={isEmployee}
                                                         onLock={(id: string) => store.toggleAssignmentLock(id)}
                                                         onDelete={deleteFromSlot}
                                                         onAdd={() => handleAddManual(area.id, day, 'morning')}
@@ -472,6 +496,7 @@ export function RosterView() {
                                                         assignment={getAssignment(area.id, day, 'noon')}
                                                         employees={employees}
                                                         isCritical={area.isCritical}
+                                                        isEmployee={isEmployee}
                                                         onLock={(id: string) => store.toggleAssignmentLock(id)}
                                                         onDelete={deleteFromSlot}
                                                         onAdd={() => handleAddManual(area.id, day, 'noon')}
@@ -485,6 +510,7 @@ export function RosterView() {
                                                         assignment={getAssignment(area.id, day, 'afternoon')}
                                                         employees={employees}
                                                         isCritical={area.isCritical}
+                                                        isEmployee={isEmployee}
                                                         onLock={(id: string) => store.toggleAssignmentLock(id)}
                                                         onDelete={deleteFromSlot}
                                                         onAdd={() => handleAddManual(area.id, day, 'afternoon')}
@@ -547,7 +573,7 @@ export function RosterView() {
                                         <div>
                                             <div className="font-medium">{emp.firstName} {emp.lastName}</div>
                                             <div className="text-[10px] opacity-70">
-                                                {isAbsFull ? 'Abwesend (Urlaub/Krank)' : isAbsRequested ? 'Urlaubswunsch für diesen Tag' : isUnavail ? 'Nicht verfügbar' : 'Verfügbar'}
+                                                {isAbsFull ? 'Abwesend (Urlaub/Krank)' : isAbsRequested ? 'Wunschplanung für diesen Tag' : isUnavail ? 'Nicht verfügbar' : 'Verfügbar'}
                                             </div>
                                         </div>
                                     </button>
@@ -562,21 +588,22 @@ export function RosterView() {
 }
 
 // Sub-Component for Cell
-function SlotCell({ label, assignment, employees, isCritical, onLock, onDelete, onAdd }: any) {
+function SlotCell({ label, assignment, employees, isCritical, isEmployee, onLock, onDelete, onAdd }: any) {
     const emp = assignment ? employees.find((e: Employee) => e.id === assignment.employeeId) : null;
     const isLocked = assignment?.isLocked;
 
     return (
         <div
             className={`
-                flex-1 rounded-lg border p-1.5 relative group transition-all duration-200 min-h-[42px] flex items-center
+                flex-1 rounded-lg border p-1.5 relative transition-all duration-200 min-h-[42px] flex items-center
+                ${!isEmployee ? 'group' : ''}
                 ${emp
                     ? (isLocked ? 'bg-amber-500/10 border-amber-500/30' : 'bg-slate-800 border-slate-700 hover:border-slate-600')
                     : 'bg-slate-800/20 border-slate-800/50 border-dashed hover:border-slate-600 hover:bg-slate-800/40 cursor-pointer'
                 }
             `}
-            // Allow adding by clicking empty cell
-            onClick={!emp ? onAdd : undefined}
+            // Allow adding by clicking empty cell (only admins/managers)
+            onClick={(!emp && !isEmployee) ? onAdd : undefined}
         >
             <div className="absolute left-1.5 top-1.5 bottom-1.5 w-0.5 rounded-full bg-slate-700/50 group-hover:bg-blue-500/50 transition-colors"></div>
 
@@ -587,25 +614,29 @@ function SlotCell({ label, assignment, employees, isCritical, onLock, onDelete, 
                 <div className="pl-3 w-full pr-4">
                     <div className="text-xs font-bold text-slate-200 truncate">{emp.firstName} {emp.lastName}</div>
                     {/* Lock Icon */}
-                    <button
-                        onClick={(e) => { e.stopPropagation(); onLock(assignment.id); }}
-                        className={`absolute right-1 bottom-1 p-0.5 rounded hover:bg-slate-700 transition-colors ${isLocked ? 'text-amber-400' : 'text-slate-600 hover:text-slate-400 opacity-0 group-hover:opacity-100'}`}
-                        title={isLocked ? "Fixierung aufheben" : "Fixieren"}
-                    >
-                        {isLocked ? <Lock size={10} /> : <Unlock size={10} />}
-                    </button>
+                    {!isEmployee && (
+                        <button
+                            onClick={(e) => { e.stopPropagation(); onLock(assignment.id); }}
+                            className={`absolute right-1 bottom-1 p-0.5 rounded hover:bg-slate-700 transition-colors ${isLocked ? 'text-amber-400' : 'text-slate-600 hover:text-slate-400 opacity-0 group-hover:opacity-100'}`}
+                            title={isLocked ? "Fixierung aufheben" : "Fixieren"}
+                        >
+                            {isLocked ? <Lock size={10} /> : <Unlock size={10} />}
+                        </button>
+                    )}
                     {/* Delete Icon */}
-                    <button
-                        onClick={(e) => { e.stopPropagation(); onDelete(assignment.id); }}
-                        className="absolute right-6 bottom-1 p-0.5 rounded hover:bg-rose-500/20 text-slate-600 hover:text-rose-400 transition-colors opacity-0 group-hover:opacity-100"
-                        title="Entfernen"
-                    >
-                        <X size={10} />
-                    </button>
+                    {!isEmployee && (
+                        <button
+                            onClick={(e) => { e.stopPropagation(); onDelete(assignment.id); }}
+                            className="absolute right-6 bottom-1 p-0.5 rounded hover:bg-rose-500/20 text-slate-600 hover:text-rose-400 transition-colors opacity-0 group-hover:opacity-100"
+                            title="Entfernen"
+                        >
+                            <X size={10} />
+                        </button>
+                    )}
                 </div>
             ) : (
                 <div className="w-full h-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                    <Plus size={14} className="text-slate-500" />
+                    {!isEmployee && <Plus size={14} className="text-slate-500" />}
                 </div>
             )}
         </div>

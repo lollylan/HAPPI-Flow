@@ -66,6 +66,8 @@ export interface Employee {
     id: string;
     firstName: string;
     lastName: string;
+    username?: string;
+    passwordHash?: string;
     status: EmploymentStatus;
     targetHoursPerWeek: number;
     vacationDaysTotal: number; // Urlaubsanspruch aktuelles Jahr
@@ -122,6 +124,7 @@ export interface AppState {
     closures: PracticeClosure[];
     activeView: ActiveView;
     slotSettings: WeeklySlotTimes;
+    adminPasswordHash?: string;
 }
 
 export const DEFAULT_AVAILABILITY: WeeklyWorkTimes = {

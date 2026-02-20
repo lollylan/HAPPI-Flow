@@ -1,4 +1,6 @@
+import { useState } from 'react';
 import { useStore } from './store';
+import { useAuth } from './AuthContext';
 import { Sidebar } from './components/Sidebar';
 import { Dashboard } from './components/Dashboard';
 import { EmployeesView } from './components/EmployeesView';
@@ -7,9 +9,15 @@ import { SkillsView } from './components/SkillsView';
 import { SettingsView } from './components/SettingsView';
 import { RosterView } from './components/RosterView';
 import { VacationView } from './components/VacationView';
+import { LoginScreen } from './components/LoginScreen';
 
 function App() {
-    const { activeView } = useStore();
+    const { activeView, adminPasswordHash, employees } = useStore();
+    const { role, login } = useAuth();
+
+    if (adminPasswordHash && !role) {
+        return <LoginScreen adminPasswordHash={adminPasswordHash} employees={employees} onLogin={(newRole, id) => login(newRole, id)} />;
+    }
 
     const renderView = () => {
         switch (activeView) {

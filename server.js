@@ -4,6 +4,8 @@ import sqlite3 from 'sqlite3';
 import { promisify } from 'util';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import crypto from 'crypto';
+import fs from 'fs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -17,6 +19,51 @@ app.use(cors({
     methods: ['GET', 'POST'],
     allowedHeaders: ['Content-Type']
 }));
+
+// Initialize Encryption Keys
+const SECRET_FILE_PATH = path.resolve(__dirname, 'secret.key');
+let ENCRYPTION_KEY;
+
+if (fs.existsSync(SECRET_FILE_PATH)) {
+    ENCRYPTION_KEY = Buffer.from(fs.readFileSync(SECRET_FILE_PATH, 'utf8'), 'hex');
+} else {
+    // Generate a secure 256-bit key and save it for future restarts
+    ENCRYPTION_KEY = crypto.randomBytes(32);
+    fs.writeFileSync(SECRET_FILE_PATH, ENCRYPTION_KEY.toString('hex'), 'utf8');
+    console.log('🔐 Generated new encryption key securely.');
+}
+
+const ALGORITHM = 'aes-256-gcm';
+
+function encryptData(text) {
+    if (text === '{}') return text; // don't encrypt empty initial state
+    const iv = crypto.randomBytes(16);
+    const cipher = crypto.createCipheriv(ALGORITHM, ENCRYPTION_KEY, iv);
+    let encrypted = cipher.update(text, 'utf8', 'hex');
+    encrypted += cipher.final('hex');
+    const authTag = cipher.getAuthTag().toString('hex');
+    return `ENCRYPTED::${iv.toString('hex')}::${authTag}::${encrypted}`;
+}
+
+function decryptData(encryptedStr) {
+    if (!encryptedStr || !encryptedStr.startsWith('ENCRYPTED::')) return encryptedStr; // Plain text fallback
+
+    try {
+        const parts = encryptedStr.split('::');
+        const iv = Buffer.from(parts[1], 'hex');
+        const authTag = Buffer.from(parts[2], 'hex');
+        const encryptedText = parts[3];
+
+        const decipher = crypto.createDecipheriv(ALGORITHM, ENCRYPTION_KEY, iv);
+        decipher.setAuthTag(authTag);
+        let decrypted = decipher.update(encryptedText, 'hex', 'utf8');
+        decrypted += decipher.final('utf8');
+        return decrypted;
+    } catch (e) {
+        console.error("❌ Decryption error (wrong key or corrupted data):", e.message);
+        throw new Error("Data Decryption Failed");
+    }
+}
 
 // Allow large payloads since we are syncing entire state JSON
 app.use(express.json({ limit: '50mb' }));
@@ -52,8 +99,16 @@ const dbRun = promisify(db.run).bind(db);
 app.get('/api/sync', async (req, res) => {
     try {
         const row = await dbGet(`SELECT data FROM state WHERE id = 'main'`);
-        if (row && row.data !== '{}') {
-            res.json(JSON.parse(row.data));
+        if (row && row.data && row.data !== '{}') {
+            const decryptedData = decryptData(row.data);
+
+            // Automatically encrypt standard plain text if it hasn't been encrypted yet
+            if (row.data === decryptedData && row.data !== '{}') {
+                console.log("🔐 Migrating plain text to encrypted database row...");
+                await dbRun(`UPDATE state SET data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 'main'`, [encryptData(row.data)]);
+            }
+
+            res.json(JSON.parse(decryptedData));
         } else {
             res.json(null); // No data yet
         }
@@ -67,7 +122,8 @@ app.get('/api/sync', async (req, res) => {
 app.post('/api/sync', async (req, res) => {
     try {
         const stateJSON = JSON.stringify(req.body);
-        await dbRun(`UPDATE state SET data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 'main'`, [stateJSON]);
+        const encryptedData = encryptData(stateJSON);
+        await dbRun(`UPDATE state SET data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 'main'`, [encryptedData]);
         res.json({ success: true, timestamp: new Date().toISOString() });
     } catch (err) {
         console.error('❌ Error saving state:', err);

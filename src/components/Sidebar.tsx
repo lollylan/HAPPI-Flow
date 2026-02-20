@@ -8,9 +8,14 @@ import {
     Activity,
     Calendar,
     Palmtree,
+    LogOut,
+    Moon,
+    Sun,
 } from 'lucide-react';
 import { ActiveView } from '../types';
+import { useState, useEffect } from 'react';
 import { store, useStore } from '../store';
+import { useAuth } from '../AuthContext';
 
 function NavItem({
     id,
@@ -39,6 +44,22 @@ function NavItem({
 
 export function Sidebar() {
     const { activeView } = useStore();
+    const { role, logout } = useAuth();
+    const isAdmin = role === 'admin';
+
+    const [isLightMode, setIsLightMode] = useState(() => {
+        return localStorage.getItem('theme') === 'light';
+    });
+
+    useEffect(() => {
+        if (isLightMode) {
+            document.body.classList.add('light-mode');
+            localStorage.setItem('theme', 'light');
+        } else {
+            document.body.classList.remove('light-mode');
+            localStorage.setItem('theme', 'dark');
+        }
+    }, [isLightMode]);
 
     return (
         <aside className="w-64 h-screen fixed left-0 top-0 glass flex flex-col z-40">
@@ -54,9 +75,14 @@ export function Sidebar() {
             </div>
 
             {/* Status Indicator */}
-            <div className="mx-4 mb-4 px-3 py-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center gap-2">
-                <Activity size={14} className="text-emerald-400" />
-                <span className="text-xs text-emerald-400 font-medium">System aktiv</span>
+            <div className="mx-4 mb-4 px-3 py-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                    <Activity size={14} className="text-emerald-400" />
+                    <span className="text-xs text-emerald-400 font-medium">Verbunden</span>
+                </div>
+                <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
+                    {isAdmin ? 'Admin' : 'Mitarbeiter'}
+                </div>
             </div>
 
             {/* Navigation */}
@@ -88,42 +114,67 @@ export function Sidebar() {
                     onClick={() => store.setActiveView('vacation')}
                 />
 
-                <div className="pt-4 pb-2">
-                    <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider px-3 mb-2">Verwaltung</div>
-                </div>
+                {isAdmin && (
+                    <>
+                        <div className="pt-4 pb-2">
+                            <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider px-3 mb-2">Verwaltung</div>
+                        </div>
 
-                <NavItem
-                    id="employees"
-                    icon={<Users size={20} />}
-                    label="Mitarbeiter"
-                    active={activeView === 'employees'}
-                    onClick={() => store.setActiveView('employees')}
-                />
-                <NavItem
-                    id="workAreas"
-                    icon={<MapPin size={20} />}
-                    label="Arbeitsbereiche"
-                    active={activeView === 'workAreas'}
-                    onClick={() => store.setActiveView('workAreas')}
-                />
-                <NavItem
-                    id="skills"
-                    icon={<Award size={20} />}
-                    label="Fähigkeiten"
-                    active={activeView === 'skills'}
-                    onClick={() => store.setActiveView('skills')}
-                />
+                        <NavItem
+                            id="employees"
+                            icon={<Users size={20} />}
+                            label="Mitarbeiter"
+                            active={activeView === 'employees'}
+                            onClick={() => store.setActiveView('employees')}
+                        />
+                        <NavItem
+                            id="workAreas"
+                            icon={<MapPin size={20} />}
+                            label="Arbeitsbereiche"
+                            active={activeView === 'workAreas'}
+                            onClick={() => store.setActiveView('workAreas')}
+                        />
+                        <NavItem
+                            id="skills"
+                            icon={<Award size={20} />}
+                            label="Fähigkeiten"
+                            active={activeView === 'skills'}
+                            onClick={() => store.setActiveView('skills')}
+                        />
+                    </>
+                )}
             </nav>
 
             {/* Bottom Actions */}
             <div className="p-3 border-t border-slate-700/50 space-y-1">
-                <NavItem
-                    id="settings"
-                    icon={<Settings size={20} />}
-                    label="Einstellungen"
-                    active={activeView === 'settings'}
-                    onClick={() => store.setActiveView('settings')}
-                />
+                {isAdmin && (
+                    <NavItem
+                        id="settings"
+                        icon={<Settings size={20} />}
+                        label="Einstellungen"
+                        active={activeView === 'settings'}
+                        onClick={() => store.setActiveView('settings')}
+                    />
+                )}
+                <button
+                    className="nav-item w-full text-rose-400 hover:text-rose-300 hover:bg-rose-500/10"
+                    onClick={() => {
+                        logout();
+                        store.setActiveView('dashboard');
+                    }}
+                >
+                    <LogOut size={20} />
+                    <span>Abmelden</span>
+                </button>
+                <div className="pt-2">
+                    <button
+                        className="nav-item w-full text-slate-400 hover:text-white hover:bg-slate-700/50"
+                        onClick={() => setIsLightMode(!isLightMode)}
+                    >
+                        {isLightMode ? <Moon size={20} /> : <Sun size={20} />}
+                        <span>{isLightMode ? 'Nachtmodus' : 'Tagmodus'}</span>
+                    </button>
+                </div>
             </div>
 
             {/* Footer */}

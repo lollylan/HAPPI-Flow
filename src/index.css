@@ -634,110 +634,131 @@ select.input-field option {
   color: #e2e8f0;
 }
 
-/* ===== PDF EXPORT THEME ===== */
-.pdf-export-theme {
+/* ===== LIGHT MODE & PDF EXPORT THEME ===== */
+:is(.light-mode, .pdf-export-theme) {
   background-color: #ffffff !important;
 }
 
-.pdf-export-theme * {
+body.light-mode {
+  background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 50%, #f8fafc 100%) !important;
+  color: #0f172a !important;
+}
+
+body.light-mode .glass {
+  background: rgba(255, 255, 255, 0.7) !important;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05) !important;
+  border-color: rgba(0, 0, 0, 0.1) !important;
+}
+
+body.light-mode .glass-card {
+  background: rgba(255, 255, 255, 0.85) !important;
+  border-color: rgba(0, 0, 0, 0.1) !important;
+}
+
+body.light-mode .glass-card:hover {
+  background: rgba(255, 255, 255, 1) !important;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1) !important;
+}
+
+:is(.light-mode, .pdf-export-theme) * {
   border-color: #cbd5e1 !important;
 }
 
-/* 1. Make all generic dark backgrounds transparent */
-.pdf-export-theme [class*="bg-slate-"],
-.pdf-export-theme [class*="bg-indigo-"] {
+/* 1. Make all generic dark backgrounds transparent, EXCEPT for specific colored blocks */
+:is(.light-mode, .pdf-export-theme) [class*="bg-slate-"]:not(.btn-primary):not([class*="bg-gradient"]):not([class*="text-white"]),
+:is(.light-mode, .pdf-export-theme) [class*="bg-indigo-"]:not(.btn-primary):not([class*="bg-gradient"]) {
   background-color: transparent !important;
 }
 
 /* 2. Re-apply backgrounds that SHOULD exist */
 /* Empty/Weekend Slots */
-.pdf-export-theme .bg-slate-800\/20,
-.pdf-export-theme [class*="bg-slate-800/20"],
-.pdf-export-theme .bg-slate-800\/30,
-.pdf-export-theme [class*="bg-slate-800/30"] {
+:is(.light-mode, .pdf-export-theme) .bg-slate-800\/20,
+:is(.light-mode, .pdf-export-theme) [class*="bg-slate-800/20"],
+:is(.light-mode, .pdf-export-theme) .bg-slate-800\/30,
+:is(.light-mode, .pdf-export-theme) [class*="bg-slate-800/30"] {
   background-color: #f8fafc !important;
   /* Very light gray */
 }
 
 /* Invalid days in vacation view */
-.pdf-export-theme .bg-slate-800\/80,
-.pdf-export-theme [class*="bg-slate-800/80"] {
+:is(.light-mode, .pdf-export-theme) .bg-slate-800\/80,
+:is(.light-mode, .pdf-export-theme) [class*="bg-slate-800/80"] {
   background-color: #e2e8f0 !important;
   /* Darker gray */
 }
 
 /* Status markers & labels that need preservation (Vacation, Sick, etc.) */
-.pdf-export-theme [class*="bg-rose-500/20"],
-.pdf-export-theme .bg-rose-500\/20 {
+:is(.light-mode, .pdf-export-theme) [class*="bg-rose-500/20"],
+:is(.light-mode, .pdf-export-theme) .bg-rose-500\/20 {
   background-color: #ffe4e6 !important;
 }
 
-.pdf-export-theme [class*="bg-emerald-500/20"],
-.pdf-export-theme .bg-emerald-500\/20 {
+:is(.light-mode, .pdf-export-theme) [class*="bg-emerald-500/20"],
+:is(.light-mode, .pdf-export-theme) .bg-emerald-500\/20 {
   background-color: #d1fae5 !important;
 }
 
-.pdf-export-theme [class*="bg-amber-500/20"],
-.pdf-export-theme .bg-amber-500\/20 {
+:is(.light-mode, .pdf-export-theme) [class*="bg-amber-500/20"],
+:is(.light-mode, .pdf-export-theme) .bg-amber-500\/20 {
   background-color: #fef3c7 !important;
 }
 
-.pdf-export-theme [class*="bg-blue-500/20"],
-.pdf-export-theme .bg-blue-500\/20 {
+:is(.light-mode, .pdf-export-theme) [class*="bg-blue-500/20"],
+:is(.light-mode, .pdf-export-theme) .bg-blue-500\/20 {
   background-color: #dbeafe !important;
 }
 
-.pdf-export-theme [class*="bg-amber-500/10"],
-.pdf-export-theme .bg-amber-500\/10 {
+:is(.light-mode, .pdf-export-theme) [class*="bg-amber-500/10"],
+:is(.light-mode, .pdf-export-theme) .bg-amber-500\/10 {
   background-color: #fef3c7 !important;
 }
 
-.pdf-export-theme [class*="bg-rose-500/10"],
-.pdf-export-theme .bg-rose-500\/10 {
+:is(.light-mode, .pdf-export-theme) [class*="bg-rose-500/10"],
+:is(.light-mode, .pdf-export-theme) .bg-rose-500\/10 {
   background-color: transparent !important;
 }
 
 /* Critical New Added: Red Background for Negative Vacation */
-.pdf-export-theme [class*="bg-rose-600"] {
+:is(.light-mode, .pdf-export-theme) [class*="bg-rose-600"] {
   background-color: #e11d48 !important;
 }
 
 /* 3. Make all text readable on white */
-.pdf-export-theme [class*="text-slate-"],
-.pdf-export-theme [class*="text-white"] {
+:is(.light-mode, .pdf-export-theme) [class*="text-slate-"],
+:is(.light-mode, .pdf-export-theme) [class*="text-white"] {
   color: #0f172a !important;
 }
 
 /* Fix specific brand/status colors so they aren't swallowed by the generic slate wipe */
-.pdf-export-theme [class*="text-slate-500"] {
+:is(.light-mode, .pdf-export-theme) [class*="text-slate-500"] {
   color: #64748b !important;
 }
 
-.pdf-export-theme [class*="text-slate-400"] {
+:is(.light-mode, .pdf-export-theme) [class*="text-slate-400"] {
   color: #475569 !important;
 }
 
-.pdf-export-theme [class*="text-rose-"] {
+:is(.light-mode, .pdf-export-theme) [class*="text-rose-"] {
   color: #e11d48 !important;
 }
 
-.pdf-export-theme [class*="text-emerald-"] {
+:is(.light-mode, .pdf-export-theme) [class*="text-emerald-"] {
   color: #059669 !important;
 }
 
-.pdf-export-theme [class*="text-amber-"] {
+:is(.light-mode, .pdf-export-theme) [class*="text-amber-"] {
   color: #d97706 !important;
 }
 
-.pdf-export-theme [class*="text-blue-"] {
+:is(.light-mode, .pdf-export-theme) [class*="text-blue-"] {
   color: #2563eb !important;
 }
 
-.pdf-export-theme [class*="text-indigo-"] {
+:is(.light-mode, .pdf-export-theme) [class*="text-indigo-"] {
   color: #4f46e5 !important;
 }
 
 /* Ensure rose-100 on absolute red background stands out */
-.pdf-export-theme .text-rose-100 {
+:is(.light-mode, .pdf-export-theme) .text-rose-100 {
   color: #ffffff !important;
 }

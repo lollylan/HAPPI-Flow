@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useStore, store } from '../store';
 import { Absence, AbsenceType, AbsenceStatus, PracticeClosure, Employee, WeeklyAvailability } from '../types';
 import { Calendar, ChevronLeft, ChevronRight, Plus, Palmtree, Thermometer, GraduationCap, HelpCircle, X, Check, Search, Clock, Home, Sparkles, Printer, RefreshCw } from 'lucide-react';
+import { useAuth } from '../AuthContext';
 import { v4 as uuidv4 } from 'uuid';
 import { toJpeg } from 'html-to-image';
 import { jsPDF } from 'jspdf';
@@ -14,7 +15,10 @@ export function VacationView() {
     const [editingClosure, setEditingClosure] = useState<PracticeClosure | null>(null);
     const [isClosureForm, setIsClosureForm] = useState(false);
 
-    const [selectedView, setSelectedView] = useState<string>('all');
+    const { role, employeeId } = useAuth();
+    const isEmployee = role === 'employee';
+
+    const [selectedView, setSelectedView] = useState<string>(isEmployee ? employeeId! : 'all');
     const [isExporting, setIsExporting] = useState(false);
     const pdfRef = React.useRef<HTMLDivElement>(null);
 
@@ -128,11 +132,11 @@ export function VacationView() {
 
     function openCreate() {
         setFormData({
-            employeeId: employees.filter(e => e.isActive)[0]?.id || '',
+            employeeId: isEmployee ? employeeId! : (employees.filter(e => e.isActive)[0]?.id || ''),
             startDate: new Date().toISOString().split('T')[0],
             endDate: new Date().toISOString().split('T')[0],
             type: 'vacation',
-            status: 'approved',
+            status: isEmployee ? 'requested' : 'approved',
             notes: ''
         });
         setEditingAbsence(null);
@@ -145,7 +149,7 @@ export function VacationView() {
             startDate: dateIso,
             endDate: dateIso,
             type: 'vacation',
-            status: 'approved',
+            status: isEmployee ? 'requested' : 'approved',
             notes: ''
         });
         setEditingAbsence(null);
@@ -230,7 +234,7 @@ export function VacationView() {
                     if (dayOfWeek !== 0 && dayOfWeek !== 6) {
                         const dayMap: Record<number, keyof WeeklyAvailability> = { 1: 'monday', 2: 'tuesday', 3: 'wednesday', 4: 'thursday', 5: 'friday' };
                         const dayName = dayMap[dayOfWeek];
-                        if (dayName && emp.availability[dayName]?.isWorking) used++;
+                        if (dayName && emp.availability[dayName as keyof WeeklyAvailability]?.isWorking) used++;
                     }
                     current.setDate(current.getDate() + 1);
                 }
@@ -258,7 +262,7 @@ export function VacationView() {
                     };
                     const dayName = dayMap[dayOfWeek];
 
-                    const candidates = employees.filter(e => e.isActive && e.availability[dayName]?.isWorking);
+                    const candidates = employees.filter(e => e.isActive && e.availability[dayName as keyof WeeklyAvailability]?.isWorking);
 
                     const mustWork: Employee[] = [];
                     const canWork: { emp: Employee, cost: number }[] = [];
@@ -327,7 +331,7 @@ export function VacationView() {
                                     1: 'monday', 2: 'tuesday', 3: 'wednesday', 4: 'thursday', 5: 'friday'
                                 };
                                 const dayName = dayMap[dayOfWeek];
-                                if (dayName && emp.availability[dayName]?.isWorking) {
+                                if (dayName && emp.availability[dayName as keyof WeeklyAvailability]?.isWorking) {
                                     canMerge = false;
                                     break;
                                 }
@@ -394,7 +398,7 @@ export function VacationView() {
                         5: 'friday'
                     };
                     const dayName = dayMap[dayOfWeek];
-                    if (dayName && employee.availability && employee.availability[dayName]?.isWorking) {
+                    if (dayName && employee.availability && employee.availability[dayName as keyof WeeklyAvailability]?.isWorking) {
                         used += 1;
                     }
                 }
@@ -470,17 +474,19 @@ export function VacationView() {
                     <p className="text-slate-400 text-sm">Abwesenheiten verwalten</p>
                 </div>
                 <div className="flex gap-4">
-                    <select
-                        className="bg-slate-800 rounded-lg p-2 text-sm text-slate-200 border border-slate-700 outline-none"
-                        value={selectedView}
-                        onChange={(e) => setSelectedView(e.target.value)}
-                        disabled={isExporting}
-                    >
-                        <option value="all">Monatsansicht (Alle Mitarbeiter)</option>
-                        {employees.map(emp => (
-                            <option key={emp.id} value={emp.id}>Jahresansicht ({emp.firstName} {emp.lastName})</option>
-                        ))}
-                    </select>
+                    {!isEmployee && (
+                        <select
+                            className="bg-slate-800 rounded-lg p-2 text-sm text-slate-200 border border-slate-700 outline-none"
+                            value={selectedView}
+                            onChange={(e) => setSelectedView(e.target.value)}
+                            disabled={isExporting}
+                        >
+                            <option value="all">Monatsansicht (Alle Mitarbeiter)</option>
+                            {employees.map(emp => (
+                                <option key={emp.id} value={emp.id}>Jahresansicht ({emp.firstName} {emp.lastName})</option>
+                            ))}
+                        </select>
+                    )}
 
                     <div className="flex items-center gap-2 bg-slate-800 rounded-lg p-1 border border-slate-700">
                         <button onClick={() => selectedView === 'all' ? prevMonth() : setCurrentDate(new Date(year - 1, month, 1))} className="p-1 hover:bg-slate-700 rounded text-slate-400 hover:text-white"><ChevronLeft size={20} /></button>
@@ -489,7 +495,7 @@ export function VacationView() {
                         </span>
                         <button onClick={() => selectedView === 'all' ? nextMonth() : setCurrentDate(new Date(year + 1, month, 1))} className="p-1 hover:bg-slate-700 rounded text-slate-400 hover:text-white"><ChevronRight size={20} /></button>
                     </div>
-                    {closures.length > 0 && selectedView === 'all' && (
+                    {!isEmployee && closures.length > 0 && selectedView === 'all' && (
                         <button onClick={autoPlanAllClosures} disabled={isExporting} className="btn bg-indigo-500/20 text-indigo-400 border border-indigo-500/50 hover:bg-indigo-500/30 flex items-center gap-2">
                             <Sparkles size={18} /> Alle Schließzeiten verteilen
                         </button>
@@ -631,10 +637,10 @@ export function VacationView() {
                                                         style={{ left: style.left, width: style.width }}
                                                         className={style.className}
                                                         onClick={() => openEdit(absence)}
-                                                        title={`${emp.firstName} (${absence.status === 'requested' ? 'Wunsch' : 'Fest'}): ${absence.notes || (absence.type === 'vacation' ? 'Urlaub' : absence.type === 'sick' ? 'Krank' : absence.type === 'overtime' ? 'Überstundenabbau' : 'Fortbildung')}\n${new Date(absence.startDate).toLocaleDateString()} - ${new Date(absence.endDate).toLocaleDateString()}`}
+                                                        title={`${emp.firstName} (${absence.status === 'requested' ? 'Wunschplanung' : 'Fest'}): ${absence.notes || (absence.type === 'vacation' ? 'Urlaub' : absence.type === 'sick' ? 'Krank' : absence.type === 'overtime' ? 'Überstundenabbau' : 'Fortbildung')}\n${new Date(absence.startDate).toLocaleDateString()} - ${new Date(absence.endDate).toLocaleDateString()}`}
                                                     >
                                                         {style.icon}
-                                                        <span className="truncate flex-1">{(absence.status === 'requested' ? 'Wunsch: ' : '') + (absence.type === 'vacation' ? 'Urlaub' : absence.type === 'sick' ? 'Krank' : absence.type === 'overtime' ? 'Überstunden' : 'Fortbildung')}</span>
+                                                        <span className="truncate flex-1">{(absence.status === 'requested' ? 'Wunschplanung: ' : '') + (absence.type === 'vacation' ? 'Urlaub' : absence.type === 'sick' ? 'Krank' : absence.type === 'overtime' ? 'Überstunden' : 'Fortbildung')}</span>
                                                     </div>
                                                 );
                                             })
@@ -743,11 +749,11 @@ export function VacationView() {
                                                             style={{ left: `${(sDay - 1) * 100 / 31}%`, width: `${dur * 100 / 31}%` }}
                                                             className={`absolute top-1 h-6 rounded ${bg} border ${border} ${text} text-[10px] flex items-center gap-1 px-1 overflow-hidden whitespace-nowrap z-10 hover:brightness-110 cursor-pointer ${extra}`}
                                                             onClick={() => openEdit(absence)}
-                                                            title={`${(absence.status === 'requested' ? 'Wunsch: ' : '') + (absence.type === 'vacation' ? 'Urlaub' : absence.type === 'sick' ? 'Krank' : absence.type === 'overtime' ? 'Überstunden' : 'Fortbildung')}\n${absence.notes ? absence.notes + '\n' : ''}${new Date(absence.startDate).toLocaleDateString()} - ${new Date(absence.endDate).toLocaleDateString()}`}
+                                                            title={`${(absence.status === 'requested' ? 'Wunschplanung: ' : '') + (absence.type === 'vacation' ? 'Urlaub' : absence.type === 'sick' ? 'Krank' : absence.type === 'overtime' ? 'Überstunden' : 'Fortbildung')}\n${absence.notes ? absence.notes + '\n' : ''}${new Date(absence.startDate).toLocaleDateString()} - ${new Date(absence.endDate).toLocaleDateString()}`}
                                                         >
                                                             {icon}
                                                             <span className="truncate flex-1">
-                                                                {(absence.status === 'requested' ? 'Wunsch: ' : '') + (absence.type === 'vacation' ? 'Urlaub' : absence.type === 'sick' ? 'Krank' : absence.type === 'overtime' ? 'Überstunden' : 'Fortbildung')}
+                                                                {(absence.status === 'requested' ? 'Wunschplanung: ' : '') + (absence.type === 'vacation' ? 'Urlaub' : absence.type === 'sick' ? 'Krank' : absence.type === 'overtime' ? 'Überstunden' : 'Fortbildung')}
                                                             </span>
                                                         </div>
                                                     )
@@ -796,25 +802,25 @@ export function VacationView() {
                                     <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Art</label>
                                     <div className="grid grid-cols-4 gap-2">
                                         <button
-                                            onClick={() => setFormData({ ...formData, type: 'vacation' })}
+                                            onClick={() => setFormData({ ...formData, type: 'vacation', status: isEmployee ? 'requested' : formData.status })}
                                             className={`p-2 rounded-lg border flex flex-col items-center gap-1 transition-all ${formData.type === 'vacation' ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400' : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700'}`}
                                         >
                                             <Palmtree size={16} /> <span className="text-[10px] font-medium truncate w-full text-center">Urlaub</span>
                                         </button>
                                         <button
-                                            onClick={() => setFormData({ ...formData, type: 'sick' })}
+                                            onClick={() => setFormData({ ...formData, type: 'sick', status: isEmployee ? 'approved' : formData.status })}
                                             className={`p-2 rounded-lg border flex flex-col items-center gap-1 transition-all ${formData.type === 'sick' ? 'bg-rose-500/20 border-rose-500/50 text-rose-400' : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700'}`}
                                         >
                                             <Thermometer size={16} /> <span className="text-[10px] font-medium truncate w-full text-center">Krank</span>
                                         </button>
                                         <button
-                                            onClick={() => setFormData({ ...formData, type: 'training' })}
+                                            onClick={() => setFormData({ ...formData, type: 'training', status: isEmployee ? 'requested' : formData.status })}
                                             className={`p-2 rounded-lg border flex flex-col items-center gap-1 transition-all ${formData.type === 'training' ? 'bg-blue-500/20 border-blue-500/50 text-blue-400' : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700'}`}
                                         >
                                             <GraduationCap size={16} /> <span className="text-[10px] font-medium truncate w-full text-center">Fortbildung</span>
                                         </button>
                                         <button
-                                            onClick={() => setFormData({ ...formData, type: 'overtime' })}
+                                            onClick={() => setFormData({ ...formData, type: 'overtime', status: isEmployee ? 'requested' : formData.status })}
                                             className={`p-2 rounded-lg border flex flex-col items-center gap-1 transition-all ${formData.type === 'overtime' ? 'bg-amber-500/20 border-amber-500/50 text-amber-400' : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700'}`}
                                             title="Überstundenabbau"
                                         >
@@ -849,19 +855,27 @@ export function VacationView() {
                             <div className={`grid ${!isClosureForm ? 'grid-cols-1 md:grid-cols-2 gap-4' : 'grid-cols-1 space-y-4'}`}>
                                 {/* Status */}
                                 {!isClosureForm && (
-                                    <div className="space-y-1.5">
+                                    <div className="space-y-1.5 flex flex-col justify-center">
                                         <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Status</label>
-                                        <select
-                                            className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-slate-200 text-sm focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 outline-none"
-                                            value={formData.status}
-                                            onChange={e => setFormData({ ...formData, status: e.target.value as AbsenceStatus })}
-                                        >
-                                            <option value="approved">✅ Genehmigt / Fest geplant</option>
-                                            <option value="requested">❓ Urlaubswunsch</option>
-                                        </select>
-                                        <p className="text-[10px] text-slate-500 mt-1">
-                                            Urlaubswünsche werden vom System versucht zu erfüllen, aber bei Personalmangel überschrieben.
-                                        </p>
+                                        {!isEmployee ? (
+                                            <>
+                                                <select
+                                                    className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-slate-200 text-sm focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 outline-none"
+                                                    value={formData.status}
+                                                    onChange={e => setFormData({ ...formData, status: e.target.value as AbsenceStatus })}
+                                                >
+                                                    <option value="approved">✅ Genehmigt / Fest geplant</option>
+                                                    <option value="requested">❓ Wunschplanung</option>
+                                                </select>
+                                                <p className="text-[10px] text-slate-500 mt-1">
+                                                    Wünsche können später vom Administrator endgültig genehmigt werden.
+                                                </p>
+                                            </>
+                                        ) : (
+                                            <div className={`border rounded-lg p-2.5 text-sm font-medium ${formData.status === 'requested' ? 'bg-slate-800/80 border-slate-700 text-slate-300' : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'}`}>
+                                                {formData.status === 'requested' ? '❓ Wunschplanung (Wartet auf Bestätigung)' : '✅ Fest eingetragen'}
+                                            </div>
+                                        )}
                                     </div>)}
 
                                 {/* Notes */}

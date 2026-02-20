@@ -12,6 +12,7 @@ import {
 } from '../types';
 import { store, useStore } from '../store';
 import { v4 as uuidv4 } from 'uuid';
+import { hashPassword } from './LoginScreen';
 
 interface EmployeeFormData {
     firstName: string;
@@ -29,6 +30,8 @@ interface EmployeeFormData {
     areaPreferences: Record<string, PreferenceLevel>;
     rules: AssignmentRule[];
     notes: string;
+    username: string;
+    newPassword?: string;
 }
 
 const emptyForm: EmployeeFormData = {
@@ -47,6 +50,8 @@ const emptyForm: EmployeeFormData = {
     areaPreferences: {},
     rules: [],
     notes: '',
+    username: '',
+    newPassword: '',
 };
 
 export function EmployeesView() {
@@ -119,20 +124,35 @@ export function EmployeesView() {
             areaPreferences: emp.areaPreferences || {},
             rules: emp.rules || [],
             notes: emp.notes,
+            username: emp.username || '',
+            newPassword: '', // Don't populate password
         });
         setEditingId(emp.id);
         setShowModal(true);
     }
 
-    function handleSave() {
+    async function handleSave() {
         if (!form.firstName.trim() || !form.lastName.trim()) return;
 
+        let passHashToSave = undefined;
+        if (form.newPassword) {
+            passHashToSave = await hashPassword(form.newPassword);
+        }
+
+        const dataToSave: any = {
+            ...form,
+        };
+        delete dataToSave.newPassword;
+        if (passHashToSave) {
+            dataToSave.passwordHash = passHashToSave;
+        }
+
         if (editingId) {
-            store.updateEmployee(editingId, form);
+            store.updateEmployee(editingId, dataToSave);
         } else {
             store.addEmployee({
                 id: uuidv4(),
-                ...form,
+                ...dataToSave,
             });
         }
         setShowModal(false);
@@ -576,6 +596,40 @@ export function EmployeesView() {
                                                 max={48}
                                             />
                                         </div>
+                                    </div>
+
+                                    {/* Account Access */}
+                                    <div className="pt-2">
+                                        <div className="flex items-center gap-2 text-primary-400 border-b border-white/5 pb-2 mb-3">
+                                            <UserPlus size={16} />
+                                            <h4 className="font-semibold text-sm uppercase tracking-wider">Benutzerkonto</h4>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <div>
+                                                <label className="block text-xs font-medium text-slate-400 mb-1">Benutzername</label>
+                                                <input
+                                                    type="text"
+                                                    value={form.username}
+                                                    onChange={e => setForm(prev => ({ ...prev, username: e.target.value }))}
+                                                    className="input-field"
+                                                    placeholder="Ohne Leerzeichen"
+                                                />
+                                            </div>
+                                            <div>
+                                                <label className="block text-xs font-medium text-slate-400 mb-1">Passwort</label>
+                                                <input
+                                                    type="password"
+                                                    value={form.newPassword}
+                                                    onChange={e => setForm(prev => ({ ...prev, newPassword: e.target.value }))}
+                                                    className="input-field"
+                                                    placeholder={editingId ? "Nur zum Ändern eintragen" : "Zugang generieren"}
+                                                    minLength={4}
+                                                />
+                                            </div>
+                                        </div>
+                                        <p className="text-[10px] text-slate-500 mt-2">
+                                            {editingId ? "Lässt du Passwort leer, bleibt das aktuelle Passwort gültig." : "Nur wenn Benutzername & Passwort gesetzt sind, können sich Mitarbeiter selbst am System einloggen."}
+                                        </p>
                                     </div>
 
                                     {/* Toggles */}

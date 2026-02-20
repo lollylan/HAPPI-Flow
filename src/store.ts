@@ -55,6 +55,7 @@ function migrateData(data: any): AppState {
     if (!Array.isArray(data.absences)) data.absences = [];
     if (!Array.isArray(data.closures)) data.closures = [];
     if (!data.activeView) data.activeView = 'dashboard';
+    if (!data.adminPasswordHash) data.adminPasswordHash = '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918'; // hash for "admin"
 
     if (data.workAreas) {
         data.workAreas.forEach((area: any) => {
@@ -99,6 +100,8 @@ function migrateData(data: any): AppState {
     if (data.employees) {
         // Migrate and inject missing properties for older employee states
         data.employees.forEach((emp: any) => {
+            if (emp.username === undefined) emp.username = '';
+            if (emp.passwordHash === undefined) emp.passwordHash = '';
             if (emp.vacationDaysTotal === undefined) emp.vacationDaysTotal = 30;
             if (emp.vacationDaysCarryover === undefined) emp.vacationDaysCarryover = 0;
             if (emp.vacationDaysUsed === undefined) emp.vacationDaysUsed = 0;
@@ -138,6 +141,7 @@ function getInitialState(): AppState {
         closures: [],
         activeView: 'dashboard',
         slotSettings: defaultSlotSettings,
+        adminPasswordHash: '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918',
     };
 }
 
@@ -227,6 +231,10 @@ class Store {
     // ----- Settings -----
     updateSlotSettings(settings: WeeklySlotTimes) {
         this.update({ slotSettings: settings });
+    }
+
+    setAdminPasswordHash(hash: string) {
+        this.update({ adminPasswordHash: hash });
     }
 
     // ----- Employees -----

@@ -1,7 +1,8 @@
 import { useState, useRef } from 'react';
-import { RefreshCw, AlertTriangle, Check, Database, Info, Download, Upload, X, Clock } from 'lucide-react';
+import { RefreshCw, AlertTriangle, Check, Database, Info, Download, Upload, X, Clock, Lock, Eye, EyeOff } from 'lucide-react';
 import { store, useStore } from '../store';
 import { DAY_FULL_LABELS, WeeklyAvailability, DailySlotTimes } from '../types';
+import { hashPassword } from './LoginScreen';
 
 export function SettingsView() {
     const { employees, workAreas, skills, slotSettings } = useStore();
@@ -12,6 +13,43 @@ export function SettingsView() {
     const [importMessage, setImportMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
     const [saveMessage, setSaveMessage] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
+
+    const [oldPassword, setOldPassword] = useState('');
+    const [newPassword, setNewPassword] = useState('');
+    const [newPasswordConfirm, setNewPasswordConfirm] = useState('');
+    const [showPassword, setShowPassword] = useState(false);
+    const [pwdMessage, setPwdMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+    async function handlePasswordChange(e: React.FormEvent) {
+        e.preventDefault();
+
+        if (newPassword !== newPasswordConfirm) {
+            setPwdMessage({ type: 'error', text: 'Das neue Passwort stimmt nicht mit der Bestätigung überein.' });
+            return;
+        }
+
+        const currentHash = store.getState().adminPasswordHash;
+        const oldHash = await hashPassword(oldPassword);
+
+        if (oldHash !== currentHash) {
+            setPwdMessage({ type: 'error', text: 'Bisheriges Passwort ist falsch!' });
+            return;
+        }
+
+        if (newPassword.length < 4) {
+            setPwdMessage({ type: 'error', text: 'Das neue Passwort muss mindestens 4 Zeichen lang sein.' });
+            return;
+        }
+
+        const newHash = await hashPassword(newPassword);
+        store.setAdminPasswordHash(newHash);
+
+        setPwdMessage({ type: 'success', text: 'Passwort erfolgreich geändert!' });
+        setOldPassword('');
+        setNewPassword('');
+        setNewPasswordConfirm('');
+        setTimeout(() => setPwdMessage(null), 4000);
+    }
 
     function handleReset() {
         store.resetAll();
@@ -106,6 +144,73 @@ export function SettingsView() {
                     </button>
                 </div>
             )}
+
+            {/* Admin Password Settings */}
+            <div className="glass-card rounded-xl p-5 mb-6">
+                <div className="flex items-center gap-2 mb-4">
+                    <Lock size={16} className="text-rose-400" />
+                    <h3 className="text-sm font-semibold text-white">Admin-Passwort ändern</h3>
+                </div>
+
+                <form onSubmit={handlePasswordChange} className="space-y-4 max-w-sm">
+                    {pwdMessage && (
+                        <div className={`p-3 rounded-lg text-xs flex items-center gap-2 ${pwdMessage.type === 'success' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'}`}>
+                            {pwdMessage.type === 'success' ? <Check size={14} /> : <AlertTriangle size={14} />}
+                            {pwdMessage.text}
+                        </div>
+                    )}
+
+                    <div>
+                        <label className="block text-xs font-medium text-slate-400 mb-1">Bisheriges Passwort</label>
+                        <input
+                            type="password"
+                            value={oldPassword}
+                            onChange={(e) => setOldPassword(e.target.value)}
+                            className="input-field"
+                            placeholder="Altes Passwort eingeben"
+                            required
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-xs font-medium text-slate-400 mb-1">Neues Passwort (min. 4 Zeichen)</label>
+                        <div className="relative">
+                            <input
+                                type={showPassword ? 'text' : 'password'}
+                                value={newPassword}
+                                onChange={(e) => setNewPassword(e.target.value)}
+                                className="input-field pr-10"
+                                placeholder="Neues Passwort eingeben"
+                                minLength={4}
+                                required
+                            />
+                            <button
+                                type="button"
+                                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-300 transition-colors"
+                                onClick={() => setShowPassword(!showPassword)}
+                            >
+                                {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                            </button>
+                        </div>
+                    </div>
+                    <div>
+                        <label className="block text-xs font-medium text-slate-400 mb-1">Neues Passwort bestätigen</label>
+                        <div className="relative">
+                            <input
+                                type={showPassword ? 'text' : 'password'}
+                                value={newPasswordConfirm}
+                                onChange={(e) => setNewPasswordConfirm(e.target.value)}
+                                className="input-field pr-10"
+                                placeholder="Passwort wiederholen"
+                                minLength={4}
+                                required
+                            />
+                        </div>
+                    </div>
+                    <button type="submit" className="btn-primary" disabled={!oldPassword || !newPassword || !newPasswordConfirm}>
+                        Passwort aktualisieren
+                    </button>
+                </form>
+            </div>
 
             {/* Practice Hours Info */}
             <div className="glass-card rounded-xl p-5 mb-6">

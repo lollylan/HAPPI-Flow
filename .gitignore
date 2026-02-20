@@ -27,3 +27,6 @@ dist-ssr
 *.db
 *.sqlite
 *.sqlite3
+
+# Security
+secret.key
