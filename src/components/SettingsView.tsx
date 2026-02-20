@@ -5,9 +5,12 @@ import { DAY_FULL_LABELS, WeeklyAvailability, DailySlotTimes } from '../types';
 
 export function SettingsView() {
     const { employees, workAreas, skills, slotSettings } = useStore();
+    const [localSlotSettings, setLocalSlotSettings] = useState(slotSettings);
+    const [slotSettingsDirty, setSlotSettingsDirty] = useState(false);
     const [showResetConfirm, setShowResetConfirm] = useState(false);
     const [resetDone, setResetDone] = useState(false);
     const [importMessage, setImportMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+    const [saveMessage, setSaveMessage] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     function handleReset() {
@@ -18,9 +21,17 @@ export function SettingsView() {
     }
 
     function updateTime(day: keyof WeeklyAvailability, slot: keyof DailySlotTimes, field: 'start' | 'end' | 'isActive', value: string | boolean) {
-        const newSettings = JSON.parse(JSON.stringify(slotSettings));
+        const newSettings = JSON.parse(JSON.stringify(localSlotSettings));
         newSettings[day][slot][field] = value;
-        store.updateSlotSettings(newSettings);
+        setLocalSlotSettings(newSettings);
+        setSlotSettingsDirty(true);
+    }
+
+    function handleSaveSlotSettings() {
+        store.updateSlotSettings(localSlotSettings);
+        setSlotSettingsDirty(false);
+        setSaveMessage(true);
+        setTimeout(() => setSaveMessage(false), 3000);
     }
 
     function handleExport() {
@@ -118,7 +129,7 @@ export function SettingsView() {
                                 <tr key={day} className="border-b border-slate-700/30 last:border-0 hover:bg-slate-800/30 text-xs">
                                     <td className="px-3 py-2 font-medium text-slate-300 border-r border-slate-700/50">{DAY_FULL_LABELS[day]}</td>
                                     {(['morning', 'noon', 'afternoon'] as Array<keyof DailySlotTimes>).map((slot) => {
-                                        const time = slotSettings[day][slot];
+                                        const time = localSlotSettings[day][slot];
                                         return (
                                             <td key={slot} className="px-2 py-2 text-center border-r border-slate-700/50 last:border-0">
                                                 <div className="flex flex-col items-center justify-center gap-1.5">
@@ -141,10 +152,28 @@ export function SettingsView() {
                     </table>
                 </div>
 
-                <div className="mt-3 p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/15">
-                    <p className="text-[10px] text-amber-400/80">
-                        💡 Diese Zeiten definieren für den Algorithmus, von wann bis wann die Schichten Vormittag/Mittag/Nachmittag genau gehen. Mitarbeiter werden nur eingeteilt, wenn ihre Verfügbarkeit diese Zeiten abdeckt, bzw. zum Start-Zeitpunkt anwesend sind.
-                    </p>
+                <div className="mt-4 flex flex-col sm:flex-row items-center justify-between gap-3">
+                    <div className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/15 flex-1 w-full">
+                        <p className="text-[10px] text-amber-400/80">
+                            💡 Diese Zeiten definieren für den Algorithmus, von wann bis wann die Schichten Vormittag/Mittag/Nachmittag genau gehen. Mitarbeiter werden nur eingeteilt, wenn ihre Verfügbarkeit diese Zeiten abdeckt, bzw. zum Start-Zeitpunkt anwesend sind.
+                        </p>
+                    </div>
+
+                    <div className="flex items-center gap-3 whitespace-nowrap">
+                        {saveMessage && (
+                            <span className="text-emerald-400 text-xs flex items-center gap-1 animate-fade-in">
+                                <Check size={14} /> Gespeichert
+                            </span>
+                        )}
+                        <button
+                            className="btn-primary"
+                            disabled={!slotSettingsDirty}
+                            onClick={handleSaveSlotSettings}
+                        >
+                            <Clock size={16} />
+                            Zeiten speichern
+                        </button>
+                    </div>
                 </div>
             </div>
 
