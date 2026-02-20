@@ -1,41 +1,34 @@
-import express from 'express';
-import cors from 'cors';
-import Database from 'better-sqlite3';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import crypto from 'crypto';
-import fs from 'fs';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const express = require('express');
+const cors = require('cors');
+const Database = require('better-sqlite3');
+const path = require('path');
+const crypto = require('crypto');
+const fs = require('fs');
+const { spawn } = require('child_process');
 
 const app = express();
 const PORT = 3001;
 
-// Enable CORS for all local network requests
 app.use(cors({
     origin: '*',
     methods: ['GET', 'POST'],
     allowedHeaders: ['Content-Type']
 }));
 
-// Initialize Encryption Keys
-const SECRET_FILE_PATH = path.resolve(__dirname, 'secret.key');
+const SECRET_FILE_PATH = path.resolve(process.cwd(), 'secret.key');
 let ENCRYPTION_KEY;
 
 if (fs.existsSync(SECRET_FILE_PATH)) {
     ENCRYPTION_KEY = Buffer.from(fs.readFileSync(SECRET_FILE_PATH, 'utf8'), 'hex');
 } else {
-    // Generate a secure 256-bit key and save it for future restarts
     ENCRYPTION_KEY = crypto.randomBytes(32);
     fs.writeFileSync(SECRET_FILE_PATH, ENCRYPTION_KEY.toString('hex'), 'utf8');
-    console.log('🔐 Generated new encryption key securely.');
 }
 
 const ALGORITHM = 'aes-256-gcm';
 
 function encryptData(text) {
-    if (text === '{}') return text; // don't encrypt empty initial state
+    if (text === '{}') return text;
     const iv = crypto.randomBytes(16);
     const cipher = crypto.createCipheriv(ALGORITHM, ENCRYPTION_KEY, iv);
     let encrypted = cipher.update(text, 'utf8', 'hex');
@@ -45,8 +38,7 @@ function encryptData(text) {
 }
 
 function decryptData(encryptedStr) {
-    if (!encryptedStr || !encryptedStr.startsWith('ENCRYPTED::')) return encryptedStr; // Plain text fallback
-
+    if (!encryptedStr || !encryptedStr.startsWith('ENCRYPTED::')) return encryptedStr;
     try {
         const parts = encryptedStr.split('::');
         const iv = Buffer.from(parts[1], 'hex');
@@ -59,96 +51,74 @@ function decryptData(encryptedStr) {
         decrypted += decipher.final('utf8');
         return decrypted;
     } catch (e) {
-        console.error("❌ Decryption error (wrong key or corrupted data):", e.message);
         throw new Error("Data Decryption Failed");
     }
 }
 
-// Allow large payloads since we are syncing entire state JSON
 app.use(express.json({ limit: '50mb' }));
 
-// Initialize SQLite Database
-const dbPath = path.resolve(__dirname, 'happi-flow.db');
+const dbPath = path.resolve(process.cwd(), 'happi-flow.db');
 let db;
 try {
     db = new Database(dbPath);
-    console.log('✅ Connected to SQLite database');
-
     db.exec(`CREATE TABLE IF NOT EXISTS state (
         id TEXT PRIMARY KEY,
         data TEXT NOT NULL,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
-
     const checkStmt = db.prepare(`SELECT count(*) as count FROM state WHERE id = 'main'`);
     const countRow = checkStmt.get();
     if (countRow.count === 0) {
         db.prepare(`INSERT INTO state (id, data) VALUES ('main', '{}')`).run();
     }
-    console.log('✅ Database schema ready');
-} catch (err) {
-    console.error('❌ Error opening database:', err);
-}
+} catch (err) { }
 
-// --- ROUTES ---
-
-// Endpoint to fetch the latest state from the database
-app.get('/api/sync', async (req, res) => {
+app.get('/api/sync', (req, res) => {
     try {
         const stmt = db.prepare(`SELECT data FROM state WHERE id = 'main'`);
         const row = stmt.get();
         if (row && row.data && row.data !== '{}') {
             const decryptedData = decryptData(row.data);
-
-            // Automatically encrypt standard plain text if it hasn't been encrypted yet
             if (row.data === decryptedData && row.data !== '{}') {
-                console.log("🔐 Migrating plain text to encrypted database row...");
                 db.prepare(`UPDATE state SET data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 'main'`).run(encryptData(row.data));
             }
-
             res.json(JSON.parse(decryptedData));
         } else {
-            res.json(null); // No data yet
+            res.json(null);
         }
     } catch (err) {
-        console.error('❌ Error fetching state:', err);
-        res.status(500).json({ error: 'Failed to fetch state' });
+        res.status(500).json({ error: 'Failed' });
     }
 });
 
-// Endpoint to save state to the database
-app.post('/api/sync', async (req, res) => {
+app.post('/api/sync', (req, res) => {
     try {
         const stateJSON = JSON.stringify(req.body);
         const encryptedData = encryptData(stateJSON);
         db.prepare(`UPDATE state SET data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 'main'`).run(encryptedData);
         res.json({ success: true, timestamp: new Date().toISOString() });
     } catch (err) {
-        console.error('❌ Error saving state:', err);
-        res.status(500).json({ error: 'Failed to save state' });
+        res.status(500).json({ error: 'Failed' });
     }
 });
 
-// Serve the statically built React Application (for production/Electron wrapper)
+// Serve the statically built React Application
 app.use(express.static(path.join(__dirname, 'dist')));
-
 app.use((req, res, next) => {
     if (req.path.startsWith('/api')) return next();
     res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 
-// Start Server, listening on 0.0.0.0 for network access
+// Start Server and automatically launch browser
 const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`\n🚀 Backend-Server is running!`);
-    console.log(`📡 Local:   http://localhost:${PORT}`);
-    console.log(`🌍 Network: http://<YOUR_IP_ADDRESS>:${PORT}\n`);
-});
+    console.log(`\n🚀 HÄPPI-Flow is starting...`);
+    console.log(`📡 Local server: http://localhost:${PORT}`);
+    console.log(`(Opening in your browser immediately...)`);
 
-// For graceful shutdown (important for Electron wrapper)
-process.on('SIGTERM', () => server.close());
-process.on('message', (msg) => {
-    if (msg === 'shutdown') {
-        server.close();
-        process.exit(0);
-    }
+    setTimeout(() => {
+        // Open the browser with Windows default app
+        const url = `http://localhost:${PORT}`;
+        const startCommand = process.platform === 'win32' ? 'start' : (process.platform === 'darwin' ? 'open' : 'xdg-open');
+        spawn(startCommand, [url], { shell: true, stdio: 'ignore' });
+    }, 1000);
 });

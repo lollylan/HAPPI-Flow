@@ -1,13 +1,42 @@
 {
   "name": "h-ppi-flow",
-  "private": true,
-  "version": "0.0.0",
   "type": "module",
+  "main": "electron-main.js",
+  "bin": "server.cjs",
   "scripts": {
     "dev": "concurrently \"npm run server\" \"vite\"",
     "server": "node server.js",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "electron": "electron .",
+    "package": "electron-builder --win"
+  },
+  "build": {
+    "appId": "com.happi.flow",
+    "productName": "HÄPPI-Flow",
+    "win": {
+      "target": "nsis"
+    },
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "server.js",
+      "electron-main.js",
+      "package.json"
+    ],
+    "extraResources": [
+      "secret.key",
+      "happi-flow.db"
+    ]
+  },
+  "pkg": {
+    "scripts": "server.cjs",
+    "assets": "dist/**/*",
+    "targets": [
+      "node18-win-x64"
+    ]
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.2.0",
@@ -17,6 +46,8 @@
     "@vitejs/plugin-react": "^5.1.4",
     "concurrently": "^9.2.1",
     "cross-env": "^10.1.0",
+    "electron": "^40.6.0",
+    "electron-builder": "^26.8.1",
     "nodemon": "^3.1.13",
     "npm-run-all": "^4.1.5",
     "tailwindcss": "^4.2.0",
@@ -37,7 +68,6 @@
     "lucide-react": "^0.574.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
-    "sqlite3": "^5.1.7",
     "uuid": "^13.0.0"
   }
 }
