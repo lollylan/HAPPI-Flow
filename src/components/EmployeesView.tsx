@@ -8,7 +8,7 @@ import {
 import {
     Employee, DEFAULT_AVAILABILITY, DAY_LABELS, DAY_FULL_LABELS,
     AVAILABILITY_OPTIONS, WeeklyAvailability, DayAvailability,
-    PreferenceLevel, WorkArea, AssignmentRule
+    PreferenceLevel, WorkArea, AssignmentRule, WeeklyWorkTimes, DayWorkTime
 } from '../types';
 import { store, useStore } from '../store';
 import { v4 as uuidv4 } from 'uuid';
@@ -23,7 +23,7 @@ interface EmployeeFormData {
     vacationDaysUsed: number;
     overtimeBalance: number;
     skills: string[];
-    availability: WeeklyAvailability;
+    availability: WeeklyWorkTimes;
     isActive: boolean;
     canHomeoffice: boolean;
     areaPreferences: Record<string, PreferenceLevel>;
@@ -41,7 +41,7 @@ const emptyForm: EmployeeFormData = {
     vacationDaysUsed: 0,
     overtimeBalance: 0,
     skills: [],
-    availability: { ...DEFAULT_AVAILABILITY },
+    availability: JSON.parse(JSON.stringify(DEFAULT_AVAILABILITY)),
     isActive: true,
     canHomeoffice: false,
     areaPreferences: {},
@@ -90,7 +90,7 @@ export function EmployeesView() {
             vacationDaysUsed: emp.vacationDaysUsed,
             overtimeBalance: emp.overtimeBalance,
             skills: [...emp.skills],
-            availability: { ...emp.availability },
+            availability: JSON.parse(JSON.stringify(emp.availability)),
             isActive: emp.isActive,
             canHomeoffice: emp.canHomeoffice,
             areaPreferences: emp.areaPreferences || {},
@@ -129,10 +129,16 @@ export function EmployeesView() {
         }));
     }
 
-    function setAvailability(day: keyof WeeklyAvailability, value: DayAvailability) {
+    function setAvailabilityDayWork(day: keyof WeeklyAvailability, field: keyof DayWorkTime, value: any) {
         setForm(prev => ({
             ...prev,
-            availability: { ...prev.availability, [day]: value },
+            availability: {
+                ...prev.availability,
+                [day]: {
+                    ...prev.availability[day],
+                    [field]: value
+                }
+            },
         }));
     }
 
@@ -169,24 +175,14 @@ export function EmployeesView() {
     const activeCount = employees.filter(e => e.isActive).length;
     const inactiveCount = employees.filter(e => !e.isActive).length;
 
-    const availabilityColor = (val: DayAvailability) => {
-        switch (val) {
-            case 'full': return 'text-emerald-400 bg-emerald-500/15';
-            case 'morning': return 'text-amber-400 bg-amber-500/15';
-            case 'noon': return 'text-yellow-400 bg-yellow-500/15';
-            case 'afternoon': return 'text-primary-400 bg-primary-500/15';
-            case 'unavailable': return 'text-rose-400 bg-rose-500/15';
-        }
+    const availabilityColor = (val: DayWorkTime) => {
+        if (!val.isWorking) return 'text-rose-400 bg-rose-500/15';
+        return 'text-emerald-400 bg-emerald-500/15';
     };
 
-    const availabilityShort = (val: DayAvailability) => {
-        switch (val) {
-            case 'full': return 'GT';
-            case 'morning': return 'VM';
-            case 'noon': return 'MI';
-            case 'afternoon': return 'NM';
-            case 'unavailable': return '—';
-        }
+    const availabilityShort = (val: DayWorkTime) => {
+        if (!val.isWorking) return '—';
+        return `${val.start}-${val.end}`;
     };
 
     return (
@@ -315,13 +311,13 @@ export function EmployeesView() {
 
                                     {/* Availability Mini */}
                                     <div className="hidden lg:flex items-center gap-1">
-                                        {(Object.entries(emp.availability) as [keyof WeeklyAvailability, DayAvailability][]).map(([day, val]) => (
+                                        {(Object.entries(emp.availability) as [keyof WeeklyAvailability, DayWorkTime][]).map(([day, val]) => (
                                             <div
                                                 key={day}
                                                 className={`w-7 h-7 rounded-md flex items-center justify-center text-[10px] font-bold ${availabilityColor(val)}`}
-                                                title={`${DAY_FULL_LABELS[day]}: ${val}`}
+                                                title={`${DAY_FULL_LABELS[day]}: ${availabilityShort(val)}`}
                                             >
-                                                {availabilityShort(val)}
+                                                {val.isWorking ? 'Ja' : '—'}
                                             </div>
                                         ))}
                                     </div>
@@ -419,11 +415,11 @@ export function EmployeesView() {
                                             <div className="space-y-2">
                                                 <h5 className="text-xs font-semibold text-slate-400">Verfügbarkeit</h5>
                                                 <div className="space-y-1">
-                                                    {(Object.entries(emp.availability) as [keyof WeeklyAvailability, DayAvailability][]).map(([day, val]) => (
+                                                    {(Object.entries(emp.availability) as [keyof WeeklyAvailability, DayWorkTime][]).map(([day, val]) => (
                                                         <div key={day} className="flex items-center justify-between text-xs">
                                                             <span className="text-slate-500">{DAY_FULL_LABELS[day]}</span>
                                                             <span className={`px-2 py-0.5 rounded-md text-[10px] font-medium ${availabilityColor(val)}`}>
-                                                                {AVAILABILITY_OPTIONS.find(o => o.value === val)?.label}
+                                                                {availabilityShort(val)}
                                                             </span>
                                                         </div>
                                                     ))}
@@ -679,24 +675,15 @@ export function EmployeesView() {
                                         <label className="block text-xs font-medium text-slate-400 mb-2">Wöchentliche Verfügbarkeit</label>
                                         <div className="day-grid">
                                             {(Object.keys(form.availability) as (keyof WeeklyAvailability)[]).map(day => (
-                                                <div key={day} className="space-y-1">
-                                                    <label className="block text-[10px] font-medium text-center text-slate-400 uppercase">
+                                                <div key={day} className={`space-y-1 p-2 rounded-lg border ${form.availability[day].isWorking ? 'bg-slate-800/50 border-slate-700' : 'bg-slate-900/30 border-slate-800/50'}`}>
+                                                    <label className="block text-[10px] font-medium text-center text-slate-400 uppercase mb-2">
                                                         {DAY_FULL_LABELS[day].substring(0, 2)}
                                                     </label>
-                                                    <select
-                                                        value={form.availability[day]}
-                                                        onChange={e => setAvailability(day, e.target.value as DayAvailability)}
-                                                        className={`input-field text-[10px] text-center !py-1 !px-0 h-7 ${form.availability[day] === 'unavailable' ? 'text-rose-400 bg-rose-500/10' :
-                                                            form.availability[day] === 'full' ? 'text-emerald-400 bg-emerald-500/10' :
-                                                                'text-amber-400 bg-amber-500/10'
-                                                            }`}
-                                                    >
-                                                        <option value="full">Ganztags</option>
-                                                        <option value="morning">Vorm.</option>
-                                                        <option value="noon">Mittag</option>
-                                                        <option value="afternoon">Nachm.</option>
-                                                        <option value="unavailable">-</option>
-                                                    </select>
+                                                    <div className="flex items-center justify-center mb-2">
+                                                        <input type="checkbox" checked={form.availability[day].isWorking} onChange={e => setAvailabilityDayWork(day, 'isWorking', e.target.checked)} className="cursor-pointer" />
+                                                    </div>
+                                                    <input type="time" disabled={!form.availability[day].isWorking} value={form.availability[day].start} onChange={e => setAvailabilityDayWork(day, 'start', e.target.value)} className="input-field text-[10px] text-center !py-1 !px-0 h-6 mb-1 disabled:opacity-30 border-slate-700 bg-slate-900" />
+                                                    <input type="time" disabled={!form.availability[day].isWorking} value={form.availability[day].end} onChange={e => setAvailabilityDayWork(day, 'end', e.target.value)} className="input-field text-[10px] text-center !py-1 !px-0 h-6 disabled:opacity-30 border-slate-700 bg-slate-900" />
                                                 </div>
                                             ))}
                                         </div>

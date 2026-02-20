@@ -1,9 +1,10 @@
 import { useState, useRef } from 'react';
-import { RefreshCw, AlertTriangle, Check, Database, Info, Download, Upload, X } from 'lucide-react';
+import { RefreshCw, AlertTriangle, Check, Database, Info, Download, Upload, X, Clock } from 'lucide-react';
 import { store, useStore } from '../store';
+import { DAY_FULL_LABELS, WeeklyAvailability, DailySlotTimes } from '../types';
 
 export function SettingsView() {
-    const { employees, workAreas, skills } = useStore();
+    const { employees, workAreas, skills, slotSettings } = useStore();
     const [showResetConfirm, setShowResetConfirm] = useState(false);
     const [resetDone, setResetDone] = useState(false);
     const [importMessage, setImportMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -14,6 +15,12 @@ export function SettingsView() {
         setShowResetConfirm(false);
         setResetDone(true);
         setTimeout(() => setResetDone(false), 3000);
+    }
+
+    function updateTime(day: keyof WeeklyAvailability, slot: keyof DailySlotTimes, field: 'start' | 'end', value: string) {
+        const newSettings = JSON.parse(JSON.stringify(slotSettings));
+        newSettings[day][slot][field] = value;
+        store.updateSlotSettings(newSettings);
     }
 
     function handleExport() {
@@ -68,8 +75,8 @@ export function SettingsView() {
             {/* Import Message */}
             {importMessage && (
                 <div className={`mb-6 p-4 rounded-xl flex items-center justify-between animate-fade-in ${importMessage.type === 'success'
-                        ? 'bg-emerald-500/10 border border-emerald-500/20'
-                        : 'bg-rose-500/10 border border-rose-500/20'
+                    ? 'bg-emerald-500/10 border border-emerald-500/20'
+                    : 'bg-rose-500/10 border border-rose-500/20'
                     }`}>
                     <div className="flex items-center gap-2">
                         {importMessage.type === 'success'
@@ -92,29 +99,45 @@ export function SettingsView() {
             {/* Practice Hours Info */}
             <div className="glass-card rounded-xl p-5 mb-6">
                 <div className="flex items-center gap-2 mb-4">
-                    <Info size={16} className="text-primary-400" />
-                    <h3 className="text-sm font-semibold text-white">Praxis-Öffnungszeiten</h3>
+                    <Clock size={16} className="text-primary-400" />
+                    <h3 className="text-sm font-semibold text-white">Zeiten für Schichten (Täglich)</h3>
                 </div>
-                <div className="grid grid-cols-5 gap-3">
-                    {[
-                        { day: 'Montag', hours: '08:00–13:00, 16:00–18:00' },
-                        { day: 'Dienstag', hours: '08:00–13:00, 16:00–18:00' },
-                        { day: 'Mittwoch', hours: '08:00–13:00' },
-                        { day: 'Donnerstag', hours: '08:00–13:00, 16:00–18:00' },
-                        { day: 'Freitag', hours: '08:00–13:00' },
-                    ].map(item => (
-                        <div key={item.day} className="text-center p-3 rounded-lg bg-slate-900/40 border border-slate-700/20">
-                            <div className="text-xs font-semibold text-slate-300 mb-1">{item.day}</div>
-                            <div className="text-[10px] text-slate-500 leading-relaxed whitespace-pre-line">
-                                {item.hours.replace(', ', '\n')}
-                            </div>
-                        </div>
-                    ))}
+
+                <div className="overflow-x-auto bg-slate-900/30 border border-slate-700/50 rounded-lg">
+                    <table className="w-full text-xs text-left text-slate-400">
+                        <thead className="text-[10px] font-bold uppercase bg-slate-800/80 text-slate-400 border-b border-slate-700/50">
+                            <tr>
+                                <th className="px-3 py-2 border-r border-slate-700/50">Tag</th>
+                                <th className="px-3 py-2 text-center border-r border-slate-700/50">Vormittag</th>
+                                <th className="px-3 py-2 text-center border-r border-slate-700/50">Mittag</th>
+                                <th className="px-3 py-2 text-center">Nachmittag</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {(Object.keys(DAY_FULL_LABELS) as Array<keyof WeeklyAvailability>).map(day => (
+                                <tr key={day} className="border-b border-slate-700/30 last:border-0 hover:bg-slate-800/30 text-xs">
+                                    <td className="px-3 py-2 font-medium text-slate-300 border-r border-slate-700/50">{DAY_FULL_LABELS[day]}</td>
+                                    {(['morning', 'noon', 'afternoon'] as Array<keyof DailySlotTimes>).map((slot) => {
+                                        const time = slotSettings[day][slot];
+                                        return (
+                                            <td key={slot} className="px-2 py-2 text-center border-r border-slate-700/50 last:border-0">
+                                                <div className="flex items-center justify-center gap-1">
+                                                    <input type="time" value={time.start} onChange={(e) => updateTime(day, slot, 'start', e.target.value)} className="bg-slate-800 text-slate-300 border border-slate-600 rounded px-1.5 py-1 w-[70px] focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500" />
+                                                    <span className="text-slate-500">-</span>
+                                                    <input type="time" value={time.end} onChange={(e) => updateTime(day, slot, 'end', e.target.value)} className="bg-slate-800 text-slate-300 border border-slate-600 rounded px-1.5 py-1 w-[70px] focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500" />
+                                                </div>
+                                            </td>
+                                        )
+                                    })}
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
                 </div>
+
                 <div className="mt-3 p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/15">
                     <p className="text-[10px] text-amber-400/80">
-                        💡 Pausenlogik: Automatische 30 Min Pause bei &gt;6h Dienst, 45 Min bei &gt;9h (gesetzlich).
-                        Mittagspause 13:00–16:00 optional für Verwaltungsarbeiten.
+                        💡 Diese Zeiten definieren für den Algorithmus, von wann bis wann die Schichten Vormittag/Mittag/Nachmittag genau gehen. Mitarbeiter werden nur eingeteilt, wenn ihre Verfügbarkeit diese Zeiten abdeckt, bzw. zum Start-Zeitpunkt anwesend sind.
                     </p>
                 </div>
             </div>

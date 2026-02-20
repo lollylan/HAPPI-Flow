@@ -5,7 +5,7 @@ import { Sparkles, RefreshCw, X, AlertTriangle, Lock, Unlock, Plus, Trash2, User
 import { v4 as uuidv4 } from 'uuid';
 
 export function RosterView() {
-    const { employees, workAreas, assignments, absences } = useStore();
+    const { employees, workAreas, assignments, absences, slotSettings } = useStore();
     const [isGenerating, setIsGenerating] = useState(false);
     const [selectedSlot, setSelectedSlot] = useState<{ areaId: string, day: keyof WeeklyAvailability, slot: 'morning' | 'noon' | 'afternoon' } | null>(null);
     const [rosterWarnings, setRosterWarnings] = useState<string[]>([]);
@@ -140,8 +140,11 @@ export function RosterView() {
                     const availableForSlot = employees.filter(emp => {
                         if (!emp.isActive) return false;
                         const avail = emp.availability[day];
-                        if (avail === 'unavailable') return false;
-                        if (avail !== 'full' && avail !== slot) return false;
+                        if (!avail || !avail.isWorking) return false;
+
+                        const slotDef = slotSettings[day][slot];
+                        if (!slotDef || avail.start > slotDef.start || avail.end <= slotDef.start) return false;
+
                         const absStatus = getAbsenceStatus(emp.id, dateStr);
                         if (absStatus === 'approved') return false;
                         return true;
@@ -478,7 +481,13 @@ export function RosterView() {
                                 const isAbsFull = absStatus === 'approved';
                                 const isAbsRequested = absStatus === 'requested';
                                 const avail = emp.availability[selectedSlot.day];
-                                const isUnavail = avail === 'unavailable' || (avail !== 'full' && avail !== selectedSlot.slot);
+                                let isUnavail = !avail || !avail.isWorking;
+                                if (!isUnavail) {
+                                    const slotDef = slotSettings[selectedSlot.day][selectedSlot.slot];
+                                    if (!slotDef || avail.start > slotDef.start || avail.end <= slotDef.start) {
+                                        isUnavail = true;
+                                    }
+                                }
 
                                 return (
                                     <button

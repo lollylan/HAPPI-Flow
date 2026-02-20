@@ -1,4 +1,4 @@
-import { AppState, Employee, WorkArea, Skill, Assignment, Absence } from './types';
+import { AppState, Employee, WorkArea, Skill, Assignment, Absence, WeeklySlotTimes, DEFAULT_AVAILABILITY } from './types';
 import { v4 as uuidv4 } from 'uuid';
 import { useSyncExternalStore } from 'react';
 
@@ -38,6 +38,14 @@ const seedWorkAreas: WorkArea[] = [
     },
 ];
 
+const defaultSlotSettings: WeeklySlotTimes = {
+    monday: { morning: { start: '08:00', end: '12:00' }, noon: { start: '12:00', end: '14:00' }, afternoon: { start: '14:00', end: '18:00' } },
+    tuesday: { morning: { start: '08:00', end: '12:00' }, noon: { start: '12:00', end: '14:00' }, afternoon: { start: '14:00', end: '18:00' } },
+    wednesday: { morning: { start: '08:00', end: '12:00' }, noon: { start: '12:00', end: '14:00' }, afternoon: { start: '14:00', end: '18:00' } },
+    thursday: { morning: { start: '08:00', end: '12:00' }, noon: { start: '12:00', end: '14:00' }, afternoon: { start: '14:00', end: '18:00' } },
+    friday: { morning: { start: '08:00', end: '12:00' }, noon: { start: '12:00', end: '14:00' }, afternoon: { start: '14:00', end: '18:00' } },
+};
+
 function getInitialState(): AppState {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored) {
@@ -62,6 +70,20 @@ function getInitialState(): AppState {
                 });
             }
 
+            if (!data.slotSettings) {
+                data.slotSettings = defaultSlotSettings;
+            }
+
+            if (data.employees) {
+                // Migrate old string-based availability to WeeklyWorkTimes
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                data.employees.forEach((emp: any) => {
+                    if (emp.availability && typeof emp.availability.monday === 'string') {
+                        emp.availability = JSON.parse(JSON.stringify(DEFAULT_AVAILABILITY));
+                    }
+                });
+            }
+
             return data;
         } catch {
             // corrupt data
@@ -74,6 +96,7 @@ function getInitialState(): AppState {
         assignments: [],
         absences: [],
         activeView: 'dashboard',
+        slotSettings: defaultSlotSettings,
     };
 }
 
@@ -110,6 +133,11 @@ class Store {
     // ----- View -----
     setActiveView(view: AppState['activeView']) {
         this.update({ activeView: view });
+    }
+
+    // ----- Settings -----
+    updateSlotSettings(settings: WeeklySlotTimes) {
+        this.update({ slotSettings: settings });
     }
 
     // ----- Employees -----
@@ -250,6 +278,7 @@ class Store {
             assignments: [],
             absences: [],
             activeView: 'dashboard',
+            slotSettings: defaultSlotSettings,
         };
         this.persist();
         this.listeners.forEach(l => l());

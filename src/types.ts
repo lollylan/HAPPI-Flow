@@ -40,6 +40,27 @@ export interface WeeklyAvailability {
     friday: DayAvailability;
 }
 
+export interface TimeRange {
+    start: string;
+    end: string;
+}
+
+export interface DayWorkTime {
+    isWorking: boolean;
+    start: string;
+    end: string;
+}
+
+export type WeeklyWorkTimes = Record<keyof WeeklyAvailability, DayWorkTime>;
+
+export interface DailySlotTimes {
+    morning: TimeRange;
+    noon: TimeRange;
+    afternoon: TimeRange;
+}
+
+export type WeeklySlotTimes = Record<keyof WeeklyAvailability, DailySlotTimes>;
+
 export interface Employee {
     id: string;
     firstName: string;
@@ -51,7 +72,7 @@ export interface Employee {
     vacationDaysUsed: number; // bereits genommene Urlaubstage
     overtimeBalance: number; // Überstundenkonto (Stunden)
     skills: string[]; // skill IDs
-    availability: WeeklyAvailability;
+    availability: WeeklyWorkTimes;
     isActive: boolean;
     canHomeoffice: boolean;
     areaPreferences: Record<string, PreferenceLevel>; // WorkArea.id -> PreferenceLevel
@@ -91,14 +112,15 @@ export interface AppState {
     assignments: Assignment[];
     absences: Absence[];
     activeView: ActiveView;
+    slotSettings: WeeklySlotTimes;
 }
 
-export const DEFAULT_AVAILABILITY: WeeklyAvailability = {
-    monday: 'full',
-    tuesday: 'full',
-    wednesday: 'full',
-    thursday: 'full',
-    friday: 'full',
+export const DEFAULT_AVAILABILITY: WeeklyWorkTimes = {
+    monday: { isWorking: true, start: '08:00', end: '16:00' },
+    tuesday: { isWorking: true, start: '08:00', end: '16:00' },
+    wednesday: { isWorking: true, start: '08:00', end: '16:00' },
+    thursday: { isWorking: true, start: '08:00', end: '16:00' },
+    friday: { isWorking: true, start: '08:00', end: '16:00' },
 };
 
 export const DAY_LABELS: Record<keyof WeeklyAvailability, string> = {
