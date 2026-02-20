@@ -50,7 +50,7 @@ const emptyForm: EmployeeFormData = {
 };
 
 export function EmployeesView() {
-    const { employees, skills, workAreas } = useStore();
+    const { employees, skills, workAreas, absences } = useStore();
     const [showModal, setShowModal] = useState(false);
     const [editingId, setEditingId] = useState<string | null>(null);
     const [form, setForm] = useState<EmployeeFormData>(emptyForm);
@@ -61,17 +61,40 @@ export function EmployeesView() {
 
     const filteredEmployees = employees
         .filter(e => {
-            const search = searchQuery.toLowerCase();
-            return (
-                e.firstName.toLowerCase().includes(search) ||
-                e.lastName.toLowerCase().includes(search)
-            );
-        })
-        .filter(e => {
             if (filterStatus === 'active') return e.isActive;
             if (filterStatus === 'inactive') return !e.isActive;
             return true;
+        })
+        .filter(e => (e.firstName + ' ' + e.lastName).toLowerCase().includes(searchQuery.toLowerCase()))
+        .sort((a, b) => {
+            if (a.isActive !== b.isActive) return a.isActive ? -1 : 1;
+            return a.lastName.localeCompare(b.lastName);
         });
+
+    function calculateVacationDaysUsed(employee: Employee) {
+        let used = employee.vacationDaysUsed || 0;
+        const empAbsences = absences.filter(a => a.employeeId === employee.id && a.type === 'vacation' && a.status === 'approved');
+
+        empAbsences.forEach(absence => {
+            let current = new Date(absence.startDate + "T12:00:00");
+            const end = new Date(absence.endDate + "T12:00:00");
+
+            while (current <= end) {
+                const dayOfWeek = current.getDay();
+                if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+                    const dayMap: Record<number, keyof WeeklyAvailability> = {
+                        1: 'monday', 2: 'tuesday', 3: 'wednesday', 4: 'thursday', 5: 'friday'
+                    };
+                    const dayName = dayMap[dayOfWeek];
+                    if (dayName && employee.availability[dayName]?.isWorking) {
+                        used += 1;
+                    }
+                }
+                current.setDate(current.getDate() + 1);
+            }
+        });
+        return used;
+    }
 
     function openCreate() {
         setForm(emptyForm);
@@ -249,7 +272,8 @@ export function EmployeesView() {
             ) : (
                 <div className="space-y-3">
                     {filteredEmployees.map((emp, i) => {
-                        const remaining = emp.vacationDaysTotal + emp.vacationDaysCarryover - emp.vacationDaysUsed;
+                        const used = calculateVacationDaysUsed(emp);
+                        const remaining = emp.vacationDaysTotal + emp.vacationDaysCarryover - used;
                         const isExpanded = expandedId === emp.id;
 
                         return (
@@ -291,8 +315,8 @@ export function EmployeesView() {
 
                                     {/* Quick Stats */}
                                     <div className="hidden md:flex items-center gap-4">
-                                        <div className="text-center">
-                                            <div className="text-xs text-slate-500">Urlaub</div>
+                                        <div className="text-center" title={`Urlaubsanspruch gesamt: ${emp.vacationDaysTotal + emp.vacationDaysCarryover}\nGenommen/Verplant: ${used}`}>
+                                            <div className="text-xs text-slate-500">Urlaub Übrig</div>
                                             <div className={`text-sm font-semibold ${remaining > 5 ? 'text-emerald-400' : remaining > 0 ? 'text-amber-400' : 'text-rose-400'}`}>
                                                 {remaining}T
                                             </div>
@@ -382,8 +406,8 @@ export function EmployeesView() {
                                                         <span className="text-slate-300">{emp.vacationDaysCarryover} Tage</span>
                                                     </div>
                                                     <div className="flex justify-between">
-                                                        <span className="text-slate-500">Genommen</span>
-                                                        <span className="text-slate-300">{emp.vacationDaysUsed} Tage</span>
+                                                        <span className="text-slate-500">Verplant/Genommen</span>
+                                                        <span className="text-slate-300">{used} Tage</span>
                                                     </div>
                                                     <div className="flex justify-between pt-1 border-t border-slate-700/50">
                                                         <span className="text-slate-400 font-medium">Verbleibend</span>
