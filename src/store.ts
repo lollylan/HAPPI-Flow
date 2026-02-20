@@ -119,9 +119,49 @@ type Listener = () => void;
 class Store {
     private state: AppState;
     private listeners: Set<Listener> = new Set();
+    private syncTimeout: any = null;
+    private isInitializing = true;
 
     constructor() {
         this.state = getInitialState();
+        this.initBackendSync();
+    }
+
+    private async initBackendSync() {
+        try {
+            const BACKEND_URL = `http://${window.location.hostname}:3001/api/sync`;
+            const res = await fetch(BACKEND_URL);
+            if (res.ok) {
+                const serverData = await res.json();
+                if (serverData && Object.keys(serverData).length > 0) {
+                    // Preserve local activeView but take server truth for everything else
+                    const localView = this.state.activeView;
+                    this.state = { ...this.state, ...serverData, activeView: localView };
+                    this.persist(false); // save to local storage, don't trigger push back
+                    this.listeners.forEach(l => l());
+                } else if (this.state.employees.length > 0 || this.state.assignments.length > 0) {
+                    // Server is completely empty but local has data -> Seed server
+                    this.pushToBackend();
+                }
+            }
+        } catch (e) {
+            console.error("Backend offline, running in read-only/local cache mode", e);
+        } finally {
+            this.isInitializing = false;
+        }
+    }
+
+    private pushToBackend() {
+        try {
+            const BACKEND_URL = `http://${window.location.hostname}:3001/api/sync`;
+            fetch(BACKEND_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(this.state)
+            }).catch(e => console.error("Sync push failed", e));
+        } catch (e) {
+            // ignore
+        }
     }
 
     getState(): AppState {
@@ -135,12 +175,19 @@ class Store {
 
     private update(partial: Partial<AppState>) {
         this.state = { ...this.state, ...partial };
-        this.persist();
+        this.persist(true);
         this.listeners.forEach(l => l());
     }
 
-    private persist() {
+    private persist(pushToServer = true) {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(this.state));
+
+        if (pushToServer && !this.isInitializing) {
+            if (this.syncTimeout) clearTimeout(this.syncTimeout);
+            this.syncTimeout = setTimeout(() => {
+                this.pushToBackend();
+            }, 1000);
+        }
     }
 
     // ----- View -----
