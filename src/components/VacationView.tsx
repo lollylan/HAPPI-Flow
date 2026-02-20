@@ -1,14 +1,16 @@
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { useStore, store } from '../store';
-import { Absence, AbsenceType, AbsenceStatus } from '../types';
-import { Calendar, ChevronLeft, ChevronRight, Plus, Palmtree, Thermometer, GraduationCap, HelpCircle, X, Check, Search, Clock } from 'lucide-react';
+import { Absence, AbsenceType, AbsenceStatus, PracticeClosure } from '../types';
+import { Calendar, ChevronLeft, ChevronRight, Plus, Palmtree, Thermometer, GraduationCap, HelpCircle, X, Check, Search, Clock, Home } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 
 export function VacationView() {
-    const { employees, absences } = useStore();
+    const { employees, absences, closures } = useStore();
     const [currentDate, setCurrentDate] = useState(new Date());
     const [showModal, setShowModal] = useState(false);
     const [editingAbsence, setEditingAbsence] = useState<Absence | null>(null);
+    const [editingClosure, setEditingClosure] = useState<PracticeClosure | null>(null);
+    const [isClosureForm, setIsClosureForm] = useState(false);
 
     // Month Navigation
     const year = currentDate.getFullYear();
@@ -40,25 +42,33 @@ export function VacationView() {
     const startOfMonth = new Date(year, month, 1).toISOString().split('T')[0];
     const endOfMonth = new Date(year, month + 1, 0).toISOString().split('T')[0];
 
-    // Helper to check if absence overlaps with current month
-    function getAbsenceStyle(absence: Absence) {
-        // Calculate position and width
-        const absStart = new Date(absence.startDate);
-        const absEnd = new Date(absence.endDate);
+    // Helper to check if date range overlaps with current month
+    function getStyleForDates(startDate: string, endDate: string, bg: string, border: string, text: string, icon: React.ReactNode, extraClass: string = '') {
+        const absStart = new Date(startDate);
+        const absEnd = new Date(endDate);
         const monthStart = new Date(year, month, 1);
         const monthEnd = new Date(year, month, daysInMonth);
 
-        // Clip dates to current month view
         const displayStart = absStart < monthStart ? monthStart : absStart;
         const displayEnd = absEnd > monthEnd ? monthEnd : absEnd;
 
-        // If completely outside
         if (displayStart > displayEnd) return null;
 
         const startDay = displayStart.getDate();
         const endDay = displayEnd.getDate();
         const duration = endDay - startDay + 1;
 
+        let className = `absolute top-1 h-6 rounded ${bg} border ${border} ${text} text-[10px] flex items-center gap-1 px-1 overflow-hidden whitespace-nowrap z-10 hover:brightness-110 cursor-pointer ${extraClass}`;
+
+        return {
+            left: `${(startDay - 1) * 100 / daysInMonth}%`,
+            width: `${duration * 100 / daysInMonth}%`,
+            className,
+            icon
+        };
+    }
+
+    function getAbsenceStyle(absence: Absence) {
         let bg = 'bg-slate-600';
         let border = 'border-slate-500';
         let text = 'text-slate-200';
@@ -83,18 +93,24 @@ export function VacationView() {
                 break;
         }
 
-        let className = `absolute top-1 h-6 rounded ${bg} border ${border} ${text} text-[10px] flex items-center gap-1 px-1 overflow-hidden whitespace-nowrap z-10 hover:brightness-110 cursor-pointer`;
-
+        let extraClass = '';
         if (absence.status === 'requested') {
-            className += ' opacity-80 border-dashed border-2 bg-stripes';
+            extraClass = 'opacity-80 border-dashed border-2 bg-stripes';
         }
 
-        return {
-            left: `${(startDay - 1) * 100 / daysInMonth}%`,
-            width: `${duration * 100 / daysInMonth}%`,
-            className,
-            icon
-        };
+        return getStyleForDates(absence.startDate, absence.endDate, bg, border, text, icon, extraClass);
+    }
+
+    function getClosureStyle(closure: PracticeClosure) {
+        return getStyleForDates(
+            closure.startDate,
+            closure.endDate,
+            'bg-indigo-500/20',
+            'border-indigo-500/50',
+            'text-indigo-400',
+            <Home size={10} />,
+            'opacity-90 font-bold'
+        );
     }
 
     // Modal Form State
@@ -140,26 +156,52 @@ export function VacationView() {
             notes: abs.notes || ''
         });
         setEditingAbsence(abs);
+        setEditingClosure(null);
+        setIsClosureForm(false);
+        setShowModal(true);
+    }
+
+    function openEditClosure(closure: PracticeClosure) {
+        setFormData({
+            employeeId: 'praxis',
+            startDate: closure.startDate,
+            endDate: closure.endDate,
+            type: 'vacation',
+            status: 'approved',
+            notes: closure.description
+        });
+        setEditingClosure(closure);
+        setEditingAbsence(null);
+        setIsClosureForm(true);
         setShowModal(true);
     }
 
     function save() {
-        if (!formData.employeeId) return;
-
-        const newAbsence: Absence = {
-            id: editingAbsence ? editingAbsence.id : uuidv4(),
-            employeeId: formData.employeeId,
-            startDate: formData.startDate,
-            endDate: formData.endDate,
-            type: formData.type,
-            status: formData.status,
-            notes: formData.notes
-        };
-
-        if (editingAbsence) {
-            store.updateAbsence(editingAbsence.id, newAbsence);
+        if (isClosureForm || formData.employeeId === 'praxis') {
+            const newClosure: PracticeClosure = {
+                id: editingClosure ? editingClosure.id : uuidv4(),
+                startDate: formData.startDate,
+                endDate: formData.endDate,
+                description: formData.notes
+            };
+            if (editingClosure) store.updateClosure(editingClosure.id, newClosure);
+            else store.addClosure(newClosure);
         } else {
-            store.addAbsence(newAbsence);
+            const newAbsence: Absence = {
+                id: editingAbsence ? editingAbsence.id : uuidv4(),
+                employeeId: formData.employeeId,
+                startDate: formData.startDate,
+                endDate: formData.endDate,
+                type: formData.type,
+                status: formData.status,
+                notes: formData.notes
+            };
+
+            if (editingAbsence) {
+                store.updateAbsence(editingAbsence.id, newAbsence);
+            } else {
+                store.addAbsence(newAbsence);
+            }
         }
         setShowModal(false);
     }
@@ -167,6 +209,9 @@ export function VacationView() {
     function remove() {
         if (editingAbsence) {
             store.deleteAbsence(editingAbsence.id);
+            setShowModal(false);
+        } else if (editingClosure) {
+            store.deleteClosure(editingClosure.id);
             setShowModal(false);
         }
     }
@@ -209,18 +254,59 @@ export function VacationView() {
 
                 {/* Rows Scrollable Area */}
                 <div className="overflow-y-auto overflow-x-hidden flex-1 custom-scrollbar">
-                    {[{ id: 'praxis', firstName: 'Praxisurlaub', lastName: '🏥', isActive: true } as any, ...employees.filter(e => e.isActive)].map((emp, idx) => (
+                    {/* Praxis Closure Row */}
+                    <div className="flex border-b border-slate-700/50 hover:bg-slate-700/20 transition-colors h-10 group relative bg-indigo-900/10">
+                        <div className="absolute inset-0 pointer-events-none group-hover:bg-indigo-900/20 z-0"></div>
+                        <div className="w-56 px-4 flex items-center gap-3 shrink-0 border-r border-slate-700/50 sticky left-0 z-10 bg-indigo-900/40 group-hover:bg-indigo-900/60 transition-colors">
+                            <div className="w-6 h-6 rounded-full flex items-center justify-center bg-indigo-500/20 text-indigo-400 text-sm">🏥</div>
+                            <span className="text-sm truncate font-bold text-indigo-300">Praxisschließzeiten</span>
+                        </div>
+                        <div className="flex-1 relative overflow-hidden">
+                            <div className="absolute inset-0 flex items-center justify-center text-4xl font-black text-indigo-300/5 pointer-events-none tracking-[0.5em] uppercase whitespace-nowrap z-0 selection:bg-transparent">
+                                PRAXISSCHLIESSZEITEN
+                            </div>
+                            <div className="absolute inset-0 flex z-0">
+                                {days.map(d => (
+                                    <div
+                                        key={d.date}
+                                        onClick={() => openCreateForDate('praxis', d.iso)}
+                                        title={`Klick: Neue Praxisschließzeit am ${d.date}.${month + 1}.`}
+                                        className={`flex-1 border-r border-slate-800/50 cursor-pointer hover:bg-white/5 transition-colors ${d.isWeekend ? 'bg-slate-800/20' : ''}`}
+                                    />
+                                ))}
+                            </div>
+                            {closures.map(closure => {
+                                const style = getClosureStyle(closure);
+                                if (!style) return null;
+                                return (
+                                    <div
+                                        key={closure.id}
+                                        style={{ left: style.left, width: style.width }}
+                                        className={style.className}
+                                        onClick={() => openEditClosure(closure)}
+                                        title={`Praxisschließzeit: ${closure.description}\n${new Date(closure.startDate).toLocaleDateString()} - ${new Date(closure.endDate).toLocaleDateString()}`}
+                                    >
+                                        {style.icon}
+                                        <span className="truncate flex-1">Praxis geschlossen</span>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+
+                    {/* Employee Rows */}
+                    {employees.filter(e => e.isActive).map((emp, idx) => (
                         <div key={emp.id} className={`flex border-b border-slate-700/30 hover:bg-slate-700/20 transition-colors h-10 group relative ${idx % 2 === 0 ? 'bg-slate-800/10' : ''}`}>
                             {/* Hover Guide - helps to see which row you are tracking */}
                             <div className="absolute inset-0 pointer-events-none group-hover:bg-slate-600/10 z-0"></div>
 
                             {/* Name Column */}
-                            <div className={`w-56 px-4 flex items-center gap-3 shrink-0 border-r border-slate-700/50 sticky left-0 z-10 transition-colors ${emp.id === 'praxis' ? 'bg-indigo-900/40 group-hover:bg-indigo-900/60' : 'bg-slate-900/95 group-hover:bg-slate-800/95'}`}>
-                                <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${emp.id === 'praxis' ? 'bg-indigo-500/20 text-indigo-400 text-sm' : 'bg-slate-800 text-slate-400'}`}>
-                                    {emp.id === 'praxis' ? '🏥' : `${emp.firstName[0]}${emp.lastName[0]}`}
+                            <div className={`w-56 px-4 flex items-center gap-3 shrink-0 border-r border-slate-700/50 sticky left-0 z-10 transition-colors bg-slate-900/95 group-hover:bg-slate-800/95`}>
+                                <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold bg-slate-800 text-slate-400`}>
+                                    {emp.firstName[0]}{emp.lastName[0]}
                                 </div>
-                                <span className={`text-sm truncate ${emp.id === 'praxis' ? 'font-bold text-indigo-300' : 'text-slate-300'}`}>
-                                    {emp.id === 'praxis' ? 'Allgemeiner Praxisurlaub' : `${emp.firstName} ${emp.lastName}`}
+                                <span className="text-sm truncate text-slate-300">
+                                    {emp.firstName} {emp.lastName}
                                 </span>
                             </div>
 
@@ -228,7 +314,7 @@ export function VacationView() {
                             <div className="flex-1 relative overflow-hidden">
                                 {/* Watermark */}
                                 <div className="absolute inset-0 flex items-center justify-center text-4xl font-black text-slate-300/5 pointer-events-none tracking-[0.5em] uppercase whitespace-nowrap z-0 selection:bg-transparent">
-                                    {emp.id === 'praxis' ? 'PRAXISURLAUB' : `${emp.firstName} ${emp.lastName}`}
+                                    {emp.firstName} {emp.lastName}
                                 </div>
 
                                 {/* Grid Lines Background and Interaction */}
@@ -255,7 +341,7 @@ export function VacationView() {
                                                 style={{ left: style.left, width: style.width }}
                                                 className={style.className}
                                                 onClick={() => openEdit(absence)}
-                                                title={`${emp.id === 'praxis' ? 'Praxisurlaub' : emp.firstName} (${absence.status === 'requested' ? 'Wunsch' : 'Fest'}): ${absence.notes || (absence.type === 'vacation' ? 'Urlaub' : absence.type === 'sick' ? 'Krank' : absence.type === 'overtime' ? 'Überstundenabbau' : 'Fortbildung')}\n${new Date(absence.startDate).toLocaleDateString()} - ${new Date(absence.endDate).toLocaleDateString()}`}
+                                                title={`${emp.firstName} (${absence.status === 'requested' ? 'Wunsch' : 'Fest'}): ${absence.notes || (absence.type === 'vacation' ? 'Urlaub' : absence.type === 'sick' ? 'Krank' : absence.type === 'overtime' ? 'Überstundenabbau' : 'Fortbildung')}\n${new Date(absence.startDate).toLocaleDateString()} - ${new Date(absence.endDate).toLocaleDateString()}`}
                                             >
                                                 {style.icon}
                                                 <span className="truncate flex-1">{(absence.status === 'requested' ? 'Wunsch: ' : '') + (absence.type === 'vacation' ? 'Urlaub' : absence.type === 'sick' ? 'Krank' : absence.type === 'overtime' ? 'Überstunden' : 'Fortbildung')}</span>
@@ -274,18 +360,21 @@ export function VacationView() {
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowModal(false)}>
                     <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-full max-w-md overflow-hidden" onClick={e => e.stopPropagation()}>
                         <div className="p-5 border-b border-slate-800 flex justify-between items-center bg-slate-900">
-                            <h3 className="text-lg font-bold text-white">{editingAbsence ? 'Eintrag bearbeiten' : 'Neue Abwesenheit'}</h3>
+                            <h3 className="text-lg font-bold text-white">{(editingAbsence || editingClosure) ? 'Eintrag bearbeiten' : 'Neue Abwesenheit'}</h3>
                             <button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-white"><X size={20} /></button>
                         </div>
                         <div className="p-6 space-y-4">
                             {/* Employee Select */}
                             <div className="space-y-1.5">
-                                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Mitarbeiter</label>
+                                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Mitarbeiter / Geltungsbereich</label>
                                 <select
                                     className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-slate-200 text-sm focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 outline-none"
                                     value={formData.employeeId}
-                                    onChange={e => setFormData({ ...formData, employeeId: e.target.value })}
-                                    disabled={!!editingAbsence}
+                                    onChange={e => {
+                                        setFormData({ ...formData, employeeId: e.target.value });
+                                        setIsClosureForm(e.target.value === 'praxis');
+                                    }}
+                                    disabled={!!editingAbsence || !!editingClosure}
                                 >
                                     <option value="praxis">🏥 Allgemeiner Praxisurlaub</option>
                                     {employees.filter(e => e.isActive).map(e => (
@@ -295,36 +384,37 @@ export function VacationView() {
                             </div>
 
                             {/* Type Select */}
-                            <div className="space-y-1.5">
-                                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Art</label>
-                                <div className="grid grid-cols-4 gap-2">
-                                    <button
-                                        onClick={() => setFormData({ ...formData, type: 'vacation' })}
-                                        className={`p-2 rounded-lg border flex flex-col items-center gap-1 transition-all ${formData.type === 'vacation' ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400' : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700'}`}
-                                    >
-                                        <Palmtree size={16} /> <span className="text-[10px] font-medium truncate w-full text-center">Urlaub</span>
-                                    </button>
-                                    <button
-                                        onClick={() => setFormData({ ...formData, type: 'sick' })}
-                                        className={`p-2 rounded-lg border flex flex-col items-center gap-1 transition-all ${formData.type === 'sick' ? 'bg-rose-500/20 border-rose-500/50 text-rose-400' : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700'}`}
-                                    >
-                                        <Thermometer size={16} /> <span className="text-[10px] font-medium truncate w-full text-center">Krank</span>
-                                    </button>
-                                    <button
-                                        onClick={() => setFormData({ ...formData, type: 'training' })}
-                                        className={`p-2 rounded-lg border flex flex-col items-center gap-1 transition-all ${formData.type === 'training' ? 'bg-blue-500/20 border-blue-500/50 text-blue-400' : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700'}`}
-                                    >
-                                        <GraduationCap size={16} /> <span className="text-[10px] font-medium truncate w-full text-center">Fortbildung</span>
-                                    </button>
-                                    <button
-                                        onClick={() => setFormData({ ...formData, type: 'overtime' })}
-                                        className={`p-2 rounded-lg border flex flex-col items-center gap-1 transition-all ${formData.type === 'overtime' ? 'bg-amber-500/20 border-amber-500/50 text-amber-400' : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700'}`}
-                                        title="Überstundenabbau"
-                                    >
-                                        <Clock size={16} /> <span className="text-[10px] font-medium truncate w-full text-center">Überstd.</span>
-                                    </button>
-                                </div>
-                            </div>
+                            {!isClosureForm && (
+                                <div className="space-y-1.5">
+                                    <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Art</label>
+                                    <div className="grid grid-cols-4 gap-2">
+                                        <button
+                                            onClick={() => setFormData({ ...formData, type: 'vacation' })}
+                                            className={`p-2 rounded-lg border flex flex-col items-center gap-1 transition-all ${formData.type === 'vacation' ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400' : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700'}`}
+                                        >
+                                            <Palmtree size={16} /> <span className="text-[10px] font-medium truncate w-full text-center">Urlaub</span>
+                                        </button>
+                                        <button
+                                            onClick={() => setFormData({ ...formData, type: 'sick' })}
+                                            className={`p-2 rounded-lg border flex flex-col items-center gap-1 transition-all ${formData.type === 'sick' ? 'bg-rose-500/20 border-rose-500/50 text-rose-400' : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700'}`}
+                                        >
+                                            <Thermometer size={16} /> <span className="text-[10px] font-medium truncate w-full text-center">Krank</span>
+                                        </button>
+                                        <button
+                                            onClick={() => setFormData({ ...formData, type: 'training' })}
+                                            className={`p-2 rounded-lg border flex flex-col items-center gap-1 transition-all ${formData.type === 'training' ? 'bg-blue-500/20 border-blue-500/50 text-blue-400' : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700'}`}
+                                        >
+                                            <GraduationCap size={16} /> <span className="text-[10px] font-medium truncate w-full text-center">Fortbildung</span>
+                                        </button>
+                                        <button
+                                            onClick={() => setFormData({ ...formData, type: 'overtime' })}
+                                            className={`p-2 rounded-lg border flex flex-col items-center gap-1 transition-all ${formData.type === 'overtime' ? 'bg-amber-500/20 border-amber-500/50 text-amber-400' : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700'}`}
+                                            title="Überstundenabbau"
+                                        >
+                                            <Clock size={16} /> <span className="text-[10px] font-medium truncate w-full text-center">Überstd.</span>
+                                        </button>
+                                    </div>
+                                </div>)}
 
                             {/* Dates */}
                             <div className="grid grid-cols-2 gap-4">
@@ -349,22 +439,23 @@ export function VacationView() {
                             </div>
 
                             {/* Status and Notes Grid */}
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className={`grid ${!isClosureForm ? 'grid-cols-1 md:grid-cols-2 gap-4' : 'grid-cols-1 space-y-4'}`}>
                                 {/* Status */}
-                                <div className="space-y-1.5">
-                                    <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Status</label>
-                                    <select
-                                        className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-slate-200 text-sm focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 outline-none"
-                                        value={formData.status}
-                                        onChange={e => setFormData({ ...formData, status: e.target.value as AbsenceStatus })}
-                                    >
-                                        <option value="approved">✅ Genehmigt / Fest geplant</option>
-                                        <option value="requested">❓ Urlaubswunsch</option>
-                                    </select>
-                                    <p className="text-[10px] text-slate-500 mt-1">
-                                        Urlaubswünsche werden vom System versucht zu erfüllen, aber bei Personalmangel überschrieben.
-                                    </p>
-                                </div>
+                                {!isClosureForm && (
+                                    <div className="space-y-1.5">
+                                        <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Status</label>
+                                        <select
+                                            className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-slate-200 text-sm focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 outline-none"
+                                            value={formData.status}
+                                            onChange={e => setFormData({ ...formData, status: e.target.value as AbsenceStatus })}
+                                        >
+                                            <option value="approved">✅ Genehmigt / Fest geplant</option>
+                                            <option value="requested">❓ Urlaubswunsch</option>
+                                        </select>
+                                        <p className="text-[10px] text-slate-500 mt-1">
+                                            Urlaubswünsche werden vom System versucht zu erfüllen, aber bei Personalmangel überschrieben.
+                                        </p>
+                                    </div>)}
 
                                 {/* Notes */}
                                 <div className="space-y-1.5 flex-1">
@@ -380,7 +471,7 @@ export function VacationView() {
                             </div>
                         </div>
                         <div className="p-5 border-t border-slate-800 bg-slate-900/50 flex justify-between">
-                            {editingAbsence ? (
+                            {(editingAbsence || editingClosure) ? (
                                 <button onClick={remove} className="text-rose-400 hover:bg-rose-500/10 px-3 py-2 rounded-lg text-sm font-medium transition-colors">
                                     Löschen
                                 </button>

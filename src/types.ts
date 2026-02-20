@@ -104,6 +104,13 @@ export interface Absence {
     notes?: string;
 }
 
+export interface PracticeClosure {
+    id: string;
+    startDate: string; // ISO Date YYYY-MM-DD
+    endDate: string; // ISO Date YYYY-MM-DD
+    description: string;
+}
+
 export type ActiveView = 'dashboard' | 'employees' | 'workAreas' | 'skills' | 'settings' | 'roster' | 'vacation';
 
 export interface AppState {
@@ -112,6 +119,7 @@ export interface AppState {
     skills: Skill[];
     assignments: Assignment[];
     absences: Absence[];
+    closures: PracticeClosure[];
     activeView: ActiveView;
     slotSettings: WeeklySlotTimes;
 }

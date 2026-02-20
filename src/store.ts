@@ -1,4 +1,4 @@
-import { AppState, Employee, WorkArea, Skill, Assignment, Absence, WeeklySlotTimes, DEFAULT_AVAILABILITY } from './types';
+import { AppState, Employee, WorkArea, Skill, Assignment, Absence, WeeklySlotTimes, DEFAULT_AVAILABILITY, PracticeClosure } from './types';
 import { v4 as uuidv4 } from 'uuid';
 import { useSyncExternalStore } from 'react';
 
@@ -54,6 +54,7 @@ function getInitialState(): AppState {
             // Migration: Ensure new fields exist and fix legacy data types
             if (!data.assignments) data.assignments = [];
             if (!data.absences) data.absences = [];
+            if (!data.closures) data.closures = [];
 
             if (data.workAreas) {
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -106,6 +107,7 @@ function getInitialState(): AppState {
         skills: seedSkills,
         assignments: [],
         absences: [],
+        closures: [],
         activeView: 'dashboard',
         slotSettings: defaultSlotSettings,
     };
@@ -279,6 +281,25 @@ class Store {
         });
     }
 
+    // ----- Closures -----
+    addClosure(closure: PracticeClosure) {
+        this.update({ closures: [...this.state.closures, closure] });
+    }
+
+    updateClosure(id: string, data: Partial<PracticeClosure>) {
+        this.update({
+            closures: this.state.closures.map(c =>
+                c.id === id ? { ...c, ...data } : c
+            ),
+        });
+    }
+
+    deleteClosure(id: string) {
+        this.update({
+            closures: this.state.closures.filter(c => c.id !== id),
+        });
+    }
+
     // ----- Reset -----
     resetAll() {
         localStorage.removeItem(STORAGE_KEY);
@@ -288,6 +309,7 @@ class Store {
             skills: seedSkills.map(s => ({ ...s, id: uuidv4() })),
             assignments: [],
             absences: [],
+            closures: [],
             activeView: 'dashboard',
             slotSettings: defaultSlotSettings,
         };
@@ -306,6 +328,7 @@ class Store {
                 skills: this.state.skills,
                 assignments: this.state.assignments,
                 absences: this.state.absences,
+                closures: this.state.closures,
             },
         };
         return JSON.stringify(exportPayload, null, 2);
@@ -323,6 +346,7 @@ class Store {
                 skills: parsed.data.skills || [],
                 assignments: parsed.data.assignments || [],
                 absences: parsed.data.absences || [],
+                closures: parsed.data.closures || [],
             });
             return { success: true, message: `Import erfolgreich: ${parsed.data.employees.length} Mitarbeiter geladen.` };
         } catch {
