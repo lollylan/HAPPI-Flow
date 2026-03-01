@@ -51,4 +51,4 @@ Die App basiert auf React und Vite. Um sie lokal zum Laufen zu bringen, benötig
 
 ## 📄 Lizenz
 
-Dieses Projekt ist privat / MIT-lizenziert (je nachdem).
+Dieses Projekt ist MIT-lizenziert.
