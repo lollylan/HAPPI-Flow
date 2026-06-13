@@ -34,6 +34,17 @@ Die App basiert auf React und Vite. Um sie lokal zum Laufen zu bringen, benötig
 4. **App öffnen**
    Öffne deinen Browser und gehe zu der Adresse, die im Terminal angezeigt wird (meist `http://localhost:5173/` oder `http://localhost:5174/`).
 
+## 🔑 Anmeldung
+
+Beim ersten Start meldest du dich mit den Standard-Zugangsdaten an:
+
+| Feld         | Wert    |
+| ------------ | ------- |
+| Benutzername | `admin` |
+| Passwort     | `admin` |
+
+> ⚠️ **Wichtig:** Ändere das Standard-Passwort unbedingt direkt nach der ersten Anmeldung (unter **"Einstellungen"**). Die Zugangsdaten `admin` / `admin` sind öffentlich bekannt und bieten keinerlei Schutz, solange sie nicht geändert wurden.
+
 ## 📖 Kurzanleitung
 
 1. **Einstellungen anpassen**: Gehe zuerst in den Reiter **"Einstellungen"**. Dort kannst du die Start- und Endzeiten für die Blöcke "Vormittag", "Mittag" und "Nachmittag" für jeden Wochentag festlegen. Wenn an manchen Tagen nachmittags geschlossen ist, nehme für diesen Slot dort das Häkchen bei "Aktiv" heraus. Bestätige mit "Zeiten speichern".
