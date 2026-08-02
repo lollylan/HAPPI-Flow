@@ -6,6 +6,8 @@ import { ChangePasswordScreen } from './components/ChangePasswordScreen';
 import { LoginScreen } from './components/LoginScreen';
 import { DashboardView } from './views/DashboardView';
 import { EmployeesView } from './views/EmployeesView';
+import { MatrixView } from './views/MatrixView';
+import { SettingsView } from './views/SettingsView';
 
 export default function App() {
   const { data: user, isLoading, error } = useSession();
@@ -45,7 +47,13 @@ export default function App() {
     <Routes>
       <Route element={<AppShell user={user} />}>
         <Route index element={<DashboardView user={user} />} />
-        <Route path="mitarbeiter" element={<EmployeesView />} />
+        <Route path="mitarbeiter" element={<EmployeesView user={user} />} />
+        {user.role === 'admin' && (
+          <>
+            <Route path="matrix" element={<MatrixView />} />
+            <Route path="einstellungen" element={<SettingsView />} />
+          </>
+        )}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

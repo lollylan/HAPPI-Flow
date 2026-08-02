@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type {
   DayWorkTime,
   Employee,
@@ -159,4 +160,106 @@ export function replaceWorkTimes(db: Db, employeeId: Id, workTimes: WeeklyWorkTi
     const day = workTimes[weekday];
     insert.run(employeeId, weekday, day.isWorking ? 1 : 0, day.startMin, day.endMin, day.breakMin);
   }
+}
+
+export function replaceSkills(db: Db, employeeId: Id, skillIds: readonly Id[]): void {
+  db.prepare(`DELETE FROM employee_skills WHERE employee_id = ?`).run(employeeId);
+  const insert = db.prepare(
+    `INSERT OR IGNORE INTO employee_skills (employee_id, skill_id) VALUES (?, ?)`,
+  );
+  for (const skillId of new Set(skillIds)) insert.run(employeeId, skillId);
+}
+
+/** Eingabedaten fuer Anlegen und Aendern - ohne id und version. */
+export type EmployeeInput = Omit<Employee, 'id' | 'version'>;
+
+export function createEmployee(db: Db, input: EmployeeInput): Employee {
+  const id = randomUUID();
+  const write = db.transaction(() => {
+    db.prepare(
+      `INSERT INTO employees
+         (id, first_name, last_name, staff_type, is_pcm, employment, target_hours_week,
+          can_homeoffice, color, entry_date, exit_date, is_active, sort_order, notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      id,
+      input.firstName,
+      input.lastName,
+      input.staffType,
+      input.isPcm ? 1 : 0,
+      input.employment,
+      input.targetHoursPerWeek,
+      input.canHomeoffice ? 1 : 0,
+      input.color,
+      input.entryDate,
+      input.exitDate,
+      input.isActive ? 1 : 0,
+      input.sortOrder,
+      input.notes,
+    );
+    replaceWorkTimes(db, id, input.workTimes);
+    replaceSkills(db, id, input.skillIds);
+  });
+  write();
+
+  const created = getEmployee(db, id);
+  if (!created) throw new Error('Mitarbeiter konnte nicht angelegt werden.');
+  return created;
+}
+
+export function updateEmployee(db: Db, id: Id, input: EmployeeInput): Employee {
+  const write = db.transaction(() => {
+    const result = db
+      .prepare(
+        `UPDATE employees
+            SET first_name = ?, last_name = ?, staff_type = ?, is_pcm = ?, employment = ?,
+                target_hours_week = ?, can_homeoffice = ?, color = ?, entry_date = ?,
+                exit_date = ?, is_active = ?, sort_order = ?, notes = ?,
+                version = version + 1, updated_at = datetime('now')
+          WHERE id = ?`,
+      )
+      .run(
+        input.firstName,
+        input.lastName,
+        input.staffType,
+        input.isPcm ? 1 : 0,
+        input.employment,
+        input.targetHoursPerWeek,
+        input.canHomeoffice ? 1 : 0,
+        input.color,
+        input.entryDate,
+        input.exitDate,
+        input.isActive ? 1 : 0,
+        input.sortOrder,
+        input.notes,
+        id,
+      );
+    if (result.changes === 0) throw new Error('NOT_FOUND');
+    replaceWorkTimes(db, id, input.workTimes);
+    replaceSkills(db, id, input.skillIds);
+  });
+  write();
+
+  const updated = getEmployee(db, id);
+  if (!updated) throw new Error('NOT_FOUND');
+  return updated;
+}
+
+/**
+ * Setzt den Mitarbeiter inaktiv statt ihn zu loeschen.
+ *
+ * Ein echtes DELETE wuerde per Kaskade die gesamte Vergangenheit
+ * mitnehmen - Dienstplaene, Urlaubskonten, Krankmeldungen. Wer die Praxis
+ * verlaesst, verschwindet aus der Planung, nicht aus der Historie.
+ */
+export function deactivateEmployee(db: Db, id: Id): boolean {
+  return (
+    db
+      .prepare(
+        `UPDATE employees
+            SET is_active = 0, version = version + 1, updated_at = datetime('now')
+          WHERE id = ?`,
+      )
+      .run(id).changes > 0
+  );
 }

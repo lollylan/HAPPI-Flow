@@ -2,10 +2,12 @@ import { useEffect, useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import {
   CalendarDays,
+  Grid3x3,
   LayoutDashboard,
   LogOut,
   Moon,
   Palmtree,
+  Settings,
   Stethoscope,
   Sun,
   Users,
@@ -38,6 +40,7 @@ const NAV: readonly { section: string; entries: readonly NavEntry[] }[] = [
     section: 'Verwaltung',
     entries: [
       { to: '/mitarbeiter', label: 'Mitarbeiter', icon: Users },
+      { to: '/matrix', label: 'Einsatz-Matrix', icon: Grid3x3, adminOnly: true },
       {
         to: '/bereiche',
         label: 'Arbeitsbereiche',
@@ -46,6 +49,10 @@ const NAV: readonly { section: string; entries: readonly NavEntry[] }[] = [
         planned: true,
       },
     ],
+  },
+  {
+    section: 'System',
+    entries: [{ to: '/einstellungen', label: 'Einstellungen', icon: Settings, adminOnly: true }],
   },
 ];
 

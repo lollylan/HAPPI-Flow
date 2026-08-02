@@ -1,4 +1,5 @@
-import { AlertCircle, Home, Loader2, Stethoscope } from 'lucide-react';
+import { useState } from 'react';
+import { AlertCircle, Home, Loader2, Pencil, Plus, Stethoscope, UserMinus } from 'lucide-react';
 import {
   STAFF_TYPE_LABELS,
   contractedHoursPerWeek,
@@ -6,12 +7,19 @@ import {
   fullName,
   roundHours,
 } from '@haeppi/shared';
-import type { Employee, PracticeWeekday } from '@haeppi/shared';
+import type { Employee, PracticeWeekday, SessionUser } from '@haeppi/shared';
 import { PRACTICE_WEEKDAYS, WEEKDAY_SHORT } from '@haeppi/shared';
-import { useEmployees } from '../api/queries';
+import { useDeactivateEmployee, useEmployees, useSkills } from '../api/queries';
+import { Button, PageHeader } from '../components/ui';
+import { EmployeeEditor } from './EmployeeEditor';
 
-export function EmployeesView() {
+export function EmployeesView({ user }: { user: SessionUser }) {
+  const isAdmin = user.role === 'admin';
+  const [editing, setEditing] = useState<Employee | null | undefined>(undefined);
+
   const { data: employees, isLoading, error } = useEmployees();
+  const { data: skills } = useSkills();
+  const deactivate = useDeactivateEmployee();
 
   if (isLoading) {
     return (
@@ -34,21 +42,39 @@ export function EmployeesView() {
     );
   }
 
+  const addButton = isAdmin ? (
+    <Button variant="primary" onClick={() => setEditing(null)}>
+      <Plus className="size-4" /> Person anlegen
+    </Button>
+  ) : undefined;
+
+  const editor =
+    editing !== undefined && isAdmin ? (
+      <EmployeeEditor
+        employee={editing}
+        skills={skills ?? []}
+        onClose={() => setEditing(undefined)}
+      />
+    ) : null;
+
   if (!employees || employees.length === 0) {
     return (
-      <Page>
+      <Page action={addButton}>
         <div className="rounded-xl border border-dashed border-slate-300 p-10 text-center dark:border-slate-700">
           <p className="font-medium">Noch keine Mitarbeiter angelegt</p>
           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-            Das Anlegen und Bearbeiten kommt in der nächsten Etappe zusammen mit der Einsatz-Matrix.
+            {isAdmin
+              ? 'Lege die erste Person an – danach kannst du in der Einsatz-Matrix festlegen, wer wo arbeiten darf.'
+              : 'Die Praxisleitung hat noch niemanden eingetragen.'}
           </p>
         </div>
+        {editor}
       </Page>
     );
   }
 
   return (
-    <Page count={employees.length}>
+    <Page count={employees.length} action={addButton}>
       <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
         <table className="w-full text-sm">
           <thead className="border-b border-slate-200 text-left text-xs tracking-wide text-slate-500 uppercase dark:border-slate-800 dark:text-slate-400">
@@ -61,20 +87,47 @@ export function EmployeesView() {
                 </th>
               ))}
               <th className="px-4 py-3 text-right font-medium">Std./Woche</th>
+              {isAdmin && <th className="px-4 py-3" />}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
             {employees.map((employee) => (
-              <EmployeeRow key={employee.id} employee={employee} />
+              <EmployeeRow
+                key={employee.id}
+                employee={employee}
+                isAdmin={isAdmin}
+                onEdit={() => setEditing(employee)}
+                onDeactivate={() => {
+                  if (
+                    window.confirm(
+                      `${fullName(employee)} aus der Planung nehmen?\n\n` +
+                        `Der Datensatz bleibt mit der gesamten Historie erhalten und kann jederzeit wieder aktiviert werden.`,
+                    )
+                  ) {
+                    deactivate.mutate(employee.id);
+                  }
+                }}
+              />
             ))}
           </tbody>
         </table>
       </div>
+      {editor}
     </Page>
   );
 }
 
-function EmployeeRow({ employee }: { employee: Employee }) {
+function EmployeeRow({
+  employee,
+  isAdmin,
+  onEdit,
+  onDeactivate,
+}: {
+  employee: Employee;
+  isAdmin: boolean;
+  onEdit: () => void;
+  onDeactivate: () => void;
+}) {
   const contracted = roundHours(contractedHoursPerWeek(employee.workTimes));
   // Weicht die gerechnete Zeit vom Vertrag ab, ist das ein Pflegefehler in
   // den Stammdaten - besser hier sichtbar als spaeter im Dienstplan.
@@ -121,6 +174,26 @@ function EmployeeRow({ employee }: { employee: Employee }) {
           </span>
         )}
       </td>
+      {isAdmin && (
+        <td className="px-4 py-3">
+          <div className="flex justify-end gap-1">
+            <button
+              onClick={onEdit}
+              className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+              title="Bearbeiten"
+            >
+              <Pencil className="size-4" />
+            </button>
+            <button
+              onClick={onDeactivate}
+              className="rounded-lg p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/50"
+              title="Aus der Planung nehmen"
+            >
+              <UserMinus className="size-4" />
+            </button>
+          </div>
+        </td>
+      )}
     </tr>
   );
 }
@@ -137,15 +210,22 @@ function DayCell({ employee, day }: { employee: Employee; day: PracticeWeekday }
   );
 }
 
-function Page({ children, count }: { children: React.ReactNode; count?: number }) {
+function Page({
+  children,
+  count,
+  action,
+}: {
+  children: React.ReactNode;
+  count?: number;
+  action?: React.ReactNode;
+}) {
   return (
     <div className="p-8">
-      <header className="mb-6">
-        <h1 className="text-xl font-semibold tracking-tight">Mitarbeiter</h1>
-        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-          {count === undefined ? 'Team der Praxis' : `${count} aktive Personen`}
-        </p>
-      </header>
+      <PageHeader
+        title="Mitarbeiter"
+        subtitle={count === undefined ? 'Team der Praxis' : `${count} aktive Personen`}
+        {...(action ? { action } : {})}
+      />
       {children}
     </div>
   );

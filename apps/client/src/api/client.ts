@@ -29,6 +29,11 @@ interface RequestOptions {
   readonly method?: string;
   readonly body?: unknown;
   readonly signal?: AbortSignal;
+  /**
+   * Version des Datensatzes, den der Client geladen hat. Der Server
+   * antwortet mit 409, falls inzwischen jemand anders gespeichert hat.
+   */
+  readonly ifMatch?: number;
 }
 
 /**
@@ -48,6 +53,9 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
   if (!SAFE_METHODS.has(method)) {
     const token = readCookie(CSRF_COOKIE);
     if (token) headers.set(CSRF_HEADER, token);
+  }
+  if (options.ifMatch !== undefined) {
+    headers.set('If-Match', String(options.ifMatch));
   }
 
   const response = await fetch(`/api${path}`, {

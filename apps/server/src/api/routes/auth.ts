@@ -27,14 +27,19 @@ const passwordSchema = z.object({
  * Bremst Rateraten aus. Bewusst auf die IP bezogen: im Praxisnetz sitzen
  * nur eine Handvoll Rechner, ein Fehlversuchslimit pro Konto waere eine
  * bequeme Moeglichkeit, Kolleginnen auszusperren.
+ *
+ * Der Zaehler wird pro App-Instanz angelegt, nicht auf Modulebene - sonst
+ * teilen sich mehrere Anwendungen im selben Prozess einen Zaehler.
  */
-const loginLimiter = rateLimit({
-  windowMs: 15 * 60_000,
-  limit: 20,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'Zu viele Anmeldeversuche. Bitte in 15 Minuten erneut versuchen.' },
-});
+function createLoginLimiter() {
+  return rateLimit({
+    windowMs: 15 * 60_000,
+    limit: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Zu viele Anmeldeversuche. Bitte in 15 Minuten erneut versuchen.' },
+  });
+}
 
 function cookieOptions(maxAgeMs: number) {
   return {
@@ -50,6 +55,7 @@ function cookieOptions(maxAgeMs: number) {
 
 export function authRouter(): Router {
   const router = Router();
+  const loginLimiter = createLoginLimiter();
 
   router.post('/login', loginLimiter, async (req, res) => {
     const parsed = loginSchema.safeParse(req.body);
