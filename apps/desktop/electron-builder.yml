@@ -1,0 +1,41 @@
+appId: de.praxis.haeppiflow
+productName: HÄPPI-Flow
+copyright: Praxis
+
+directories:
+  output: ../../release
+  buildResources: build
+
+files:
+  - dist/**/*
+  - package.json
+
+# Server, Oberflaeche und Laufzeit-Abhaengigkeiten. Bewusst NICHT die
+# Datenbank und keinen Schluessel: die Vorgaengerversion lieferte
+# happi-flow.db und secret.key im Installer mit, also echte
+# Mitarbeiterdaten an jeden, der die Datei bekam.
+extraResources:
+  - from: resources
+    to: .
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  artifactName: HAEPPI-Flow-Setup-${version}.${ext}
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: HÄPPI-Flow
+
+# Native Module (better-sqlite3, @node-rs/argon2) muessen entpackt
+# vorliegen - aus einem asar-Archiv laesst sich keine .node-Datei laden.
+asarUnpack:
+  - '**/node_modules/better-sqlite3/**'
+  - '**/node_modules/@node-rs/**'
+
+npmRebuild: true

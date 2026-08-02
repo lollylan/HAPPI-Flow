@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import {
   CalendarDays,
+  Clock,
   Grid3x3,
   LayoutDashboard,
   LogOut,
@@ -33,7 +34,7 @@ const NAV: readonly { section: string; entries: readonly NavEntry[] }[] = [
     section: 'Planung',
     entries: [
       { to: '/dienstplan', label: 'Dienstplan', icon: CalendarDays },
-      { to: '/abwesenheiten', label: 'Abwesenheiten', icon: Palmtree, planned: true },
+      { to: '/abwesenheiten', label: 'Abwesenheiten', icon: Palmtree },
     ],
   },
   {
@@ -41,18 +42,15 @@ const NAV: readonly { section: string; entries: readonly NavEntry[] }[] = [
     entries: [
       { to: '/mitarbeiter', label: 'Mitarbeiter', icon: Users },
       { to: '/matrix', label: 'Einsatz-Matrix', icon: Grid3x3, adminOnly: true },
-      {
-        to: '/bereiche',
-        label: 'Arbeitsbereiche',
-        icon: Stethoscope,
-        adminOnly: true,
-        planned: true,
-      },
+      { to: '/bereiche', label: 'Arbeitsbereiche', icon: Stethoscope, adminOnly: true },
     ],
   },
   {
     section: 'System',
-    entries: [{ to: '/einstellungen', label: 'Einstellungen', icon: Settings, adminOnly: true }],
+    entries: [
+      { to: '/zeitmodell', label: 'Zeitmodell', icon: Clock, adminOnly: true },
+      { to: '/einstellungen', label: 'Einstellungen', icon: Settings, adminOnly: true },
+    ],
   },
 ];
 

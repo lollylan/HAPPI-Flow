@@ -1,5 +1,14 @@
 import { useState } from 'react';
-import { AlertCircle, Home, Loader2, Pencil, Plus, Stethoscope, UserMinus } from 'lucide-react';
+import {
+  AlertCircle,
+  Home,
+  Loader2,
+  Pencil,
+  Plus,
+  Printer,
+  Stethoscope,
+  UserMinus,
+} from 'lucide-react';
 import {
   STAFF_TYPE_LABELS,
   contractedHoursPerWeek,
@@ -177,6 +186,15 @@ function EmployeeRow({
       {isAdmin && (
         <td className="px-4 py-3">
           <div className="flex justify-end gap-1">
+            <a
+              href={`/druck/person/${employee.id}`}
+              target="_blank"
+              rel="noreferrer"
+              className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+              title="Persönlichen Wochenplan drucken"
+            >
+              <Printer className="size-4" />
+            </a>
             <button
               onClick={onEdit}
               className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"

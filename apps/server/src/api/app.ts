@@ -1,3 +1,4 @@
+import path from 'node:path';
 import express, { type Express, type NextFunction, type Request, type Response } from 'express';
 import cookieParser from 'cookie-parser';
 import type { Db } from '../db/index.js';
@@ -23,7 +24,7 @@ import { absencesRouter, closuresRouter, recurringAbsencesRouter } from './route
  * supertest gegen eine In-Memory-Datenbank testen laesst, ohne einen Port
  * zu belegen.
  */
-export function createApp(db: Db): Express {
+export function createApp(db: Db, clientDir?: string): Express {
   const app = express();
 
   app.disable('x-powered-by');
@@ -77,6 +78,18 @@ export function createApp(db: Db): Express {
   app.use('/api', (_req, res) => {
     res.status(404).json({ error: 'Unbekannter Endpunkt.' });
   });
+
+  // Im Betrieb liefert derselbe Server die Oberflaeche aus. Im
+  // Entwicklungsmodus uebernimmt das der Vite-Server, der /api hierher
+  // weiterleitet - dann gibt es kein clientDir.
+  if (clientDir) {
+    app.use(express.static(clientDir, { index: false, maxAge: '1h' }));
+    // Alle uebrigen Pfade an die Oberflaeche: sie hat eigene Routen
+    // (/dienstplan, /druck/woche/mfa …), die der Server nicht kennt.
+    app.get(/.*/, (_req, res) => {
+      res.sendFile(path.join(clientDir, 'index.html'));
+    });
+  }
 
   app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
     if (error instanceof HttpError) {

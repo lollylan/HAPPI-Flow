@@ -1,4 +1,7 @@
+import { existsSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { SERVER_HOST, SERVER_PORT, databaseFile } from './config.js';
 import { openDatabase } from './db/index.js';
 import { runMigrations } from './db/migrate.js';
@@ -6,6 +9,25 @@ import { isSeeded, seedDatabase } from './db/seed.js';
 import { ensureAdminAccount, printFirstRunNotice } from './auth/bootstrap.js';
 import { purgeExpiredSessions } from './auth/sessions.js';
 import { createApp } from './api/app.js';
+
+/**
+ * Wo die gebaute Oberflaeche liegt - oder `undefined` im Entwicklungsmodus,
+ * wo der Vite-Server sie ausliefert.
+ */
+function clientDirectory(): string | undefined {
+  const override = process.env.HAEPPI_CLIENT_DIR;
+  if (override) return override;
+
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  // Gepackt: resources/client, daneben resources/server.
+  const packaged = path.join(here, '..', 'client');
+  if (existsSync(path.join(packaged, 'index.html'))) return packaged;
+
+  const built = path.join(here, '..', '..', 'client', 'dist');
+  if (existsSync(path.join(built, 'index.html'))) return built;
+
+  return undefined;
+}
 
 function localAddresses(port: number): string[] {
   const urls: string[] = [];
@@ -36,7 +58,7 @@ async function main(): Promise<void> {
   printFirstRunNotice(await ensureAdminAccount(db));
   purgeExpiredSessions(db);
 
-  const app = createApp(db);
+  const app = createApp(db, clientDirectory());
   app.listen(SERVER_PORT, SERVER_HOST, () => {
     console.log(`[server] Datenbank: ${file}`);
     console.log(`[server] Lokal:     http://localhost:${SERVER_PORT}`);

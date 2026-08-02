@@ -7,6 +7,7 @@ import {
   Lock,
   Loader2,
   Plus,
+  Printer,
   Sparkles,
   Trash2,
   Unlock,
@@ -133,25 +134,36 @@ export function RosterView({ user }: { user: SessionUser }) {
         title="Dienstplan"
         subtitle={`KW ${isoWeekNumber(weekStart)} · ${formatRange(weekStart)}`}
         action={
-          isAdmin ? (
-            <div className="flex items-center gap-2">
-              <Button onClick={() => runGenerate(true)} disabled={generate.isPending}>
-                Probelauf
-              </Button>
-              <Button
-                variant="primary"
-                onClick={() => runGenerate(false)}
-                disabled={generate.isPending}
-              >
-                {generate.isPending ? (
-                  <Loader2 className="size-4 animate-spin" />
-                ) : (
-                  <Sparkles className="size-4" />
-                )}
-                Woche erzeugen
-              </Button>
-            </div>
-          ) : undefined
+          <div className="flex items-center gap-2">
+            <a
+              href={`/druck/woche/${plan}?woche=${weekStart}`}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium transition hover:bg-slate-100 dark:border-slate-700 dark:hover:bg-slate-800"
+              title="Übersichtsplan zum Aushängen"
+            >
+              <Printer className="size-4" /> Drucken
+            </a>
+            {isAdmin && (
+              <>
+                <Button onClick={() => runGenerate(true)} disabled={generate.isPending}>
+                  Probelauf
+                </Button>
+                <Button
+                  variant="primary"
+                  onClick={() => runGenerate(false)}
+                  disabled={generate.isPending}
+                >
+                  {generate.isPending ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <Sparkles className="size-4" />
+                  )}
+                  Woche erzeugen
+                </Button>
+              </>
+            )}
+          </div>
         }
       />
 

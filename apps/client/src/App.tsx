@@ -4,11 +4,15 @@ import { useSession } from './api/queries';
 import { AppShell } from './components/AppShell';
 import { ChangePasswordScreen } from './components/ChangePasswordScreen';
 import { LoginScreen } from './components/LoginScreen';
+import { AbsencesView } from './views/AbsencesView';
+import { AreasView } from './views/AreasView';
 import { DashboardView } from './views/DashboardView';
 import { EmployeesView } from './views/EmployeesView';
 import { MatrixView } from './views/MatrixView';
+import { PrintEmployeePlan, PrintWeekPlan } from './views/PrintViews';
 import { RosterView } from './views/RosterView';
 import { SettingsView } from './views/SettingsView';
+import { TimeModelView } from './views/TimeModelView';
 
 export default function App() {
   const { data: user, isLoading, error } = useSession();
@@ -46,13 +50,20 @@ export default function App() {
 
   return (
     <Routes>
+      {/* Druckansichten laufen ohne Navigation und Seitenrahmen. */}
+      <Route path="/druck/woche/:plan" element={<PrintWeekPlan />} />
+      <Route path="/druck/person/:employeeId" element={<PrintEmployeePlan />} />
+
       <Route element={<AppShell user={user} />}>
         <Route index element={<DashboardView user={user} />} />
         <Route path="mitarbeiter" element={<EmployeesView user={user} />} />
         <Route path="dienstplan" element={<RosterView user={user} />} />
+        <Route path="abwesenheiten" element={<AbsencesView user={user} />} />
         {user.role === 'admin' && (
           <>
             <Route path="matrix" element={<MatrixView />} />
+            <Route path="bereiche" element={<AreasView />} />
+            <Route path="zeitmodell" element={<TimeModelView />} />
             <Route path="einstellungen" element={<SettingsView />} />
           </>
         )}
