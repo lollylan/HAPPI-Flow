@@ -6,6 +6,8 @@ release
 coverage
 *.tsbuildinfo
 *.local
+# Wird von apps/desktop/scripts/prepare-resources.mjs erzeugt.
+apps/desktop/resources
 
 # Logs
 logs
