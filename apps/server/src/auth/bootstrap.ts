@@ -1,8 +1,10 @@
+import { existsSync, unlinkSync } from 'node:fs';
+import path from 'node:path';
 import { randomInt, randomUUID } from 'node:crypto';
 import type { Db } from '../db/index.js';
 import { hashPassword } from './password.js';
 
-/** Ohne I, l, 0, O - damit das Startpasswort fehlerfrei abgetippt werden kann. */
+/** Ohne I, l, 0, O - damit ein Passwort fehlerfrei abgetippt werden kann. */
 const ALPHABET = 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
 export function generatePassword(length = 16): string {
@@ -13,46 +15,106 @@ export function generatePassword(length = 16): string {
   return out;
 }
 
-export interface BootstrapResult {
-  readonly created: boolean;
+export function countUsers(db: Db): number {
+  return (db.prepare(`SELECT COUNT(*) AS n FROM users`).get() as { n: number }).n;
+}
+
+/** Solange es kein einziges Konto gibt, muss die Praxis eingerichtet werden. */
+export function needsSetup(db: Db): boolean {
+  return countUsers(db) === 0;
+}
+
+export interface FirstAdminInput {
   readonly username: string;
+  readonly password: string;
+  readonly practiceName?: string;
+}
+
+/**
+ * Legt das erste Verwaltungskonto an.
+ *
+ * Nur moeglich, solange es ueberhaupt kein Konto gibt - danach ist der Weg
+ * zu. Das ist die einzige Stelle, an der ohne Anmeldung ein Konto entsteht.
+ */
+export async function createFirstAdmin(db: Db, input: FirstAdminInput): Promise<string> {
+  if (!needsSetup(db)) {
+    throw new Error('ALREADY_SET_UP');
+  }
+  const id = randomUUID();
+  db.prepare(
+    `INSERT INTO users (id, username, password_hash, role, must_change_password)
+     VALUES (?, ?, ?, 'admin', 0)`,
+  ).run(id, input.username, await hashPassword(input.password));
+  return id;
+}
+
+/** Datei, mit der sich ein ausgesperrter Zugang wiederherstellen laesst. */
+export const RECOVERY_MARKER = 'ZUGANG-ZURUECKSETZEN.txt';
+
+export interface RecoveryResult {
+  readonly performed: boolean;
+  readonly username?: string;
   readonly password?: string;
 }
 
 /**
- * Legt beim allerersten Start ein Verwaltungskonto an.
+ * Wiederherstellung nach einem vergessenen Passwort.
  *
- * Das Passwort wird zufaellig erzeugt und einmalig auf der Konsole
- * ausgegeben; beim ersten Anmelden muss es geaendert werden. Die
- * Vorgaengerversion hatte ein fest eingebautes `admin`/`admin`, dessen
- * Hash sogar zweimal im Quelltext stand.
+ * Bewusst ueber eine Datei im Datenverzeichnis und nicht ueber einen Knopf
+ * in der Oberflaeche: so braucht es Zugriff auf das Dateisystem des
+ * Praxis-Rechners - dieselbe Huerde, die auch das Loeschen der Datenbank
+ * haette. Ein Knopf waere fuer jede neugierige Kollegin einen Klick weit weg.
+ *
+ * Die Marker-Datei wird sofort geloescht, damit der Weg nicht offen bleibt.
  */
-export async function ensureAdminAccount(db: Db): Promise<BootstrapResult> {
-  const existing = db.prepare(`SELECT COUNT(*) AS n FROM users`).get() as { n: number };
-  if (existing.n > 0) {
-    return { created: false, username: '' };
+export async function handleRecoveryMarker(db: Db, dataDir: string): Promise<RecoveryResult> {
+  const marker = path.join(dataDir, RECOVERY_MARKER);
+  if (!existsSync(marker)) return { performed: false };
+
+  const password = generatePassword();
+  const hash = await hashPassword(password);
+
+  const existing = db
+    .prepare(`SELECT id, username FROM users WHERE role = 'admin' ORDER BY created_at LIMIT 1`)
+    .get() as { id: string; username: string } | undefined;
+
+  let username: string;
+  if (existing) {
+    db.prepare(
+      `UPDATE users
+          SET password_hash = ?, must_change_password = 1, is_active = 1,
+              updated_at = datetime('now')
+        WHERE id = ?`,
+    ).run(hash, existing.id);
+    username = existing.username;
+    // Alle offenen Sitzungen beenden - sonst bliebe ein fremder Zugang bestehen.
+    db.prepare(`DELETE FROM sessions WHERE user_id = ?`).run(existing.id);
+  } else {
+    username = 'admin';
+    db.prepare(
+      `INSERT INTO users (id, username, password_hash, role, must_change_password)
+       VALUES (?, ?, ?, 'admin', 1)`,
+    ).run(randomUUID(), username, hash);
   }
 
-  const username = 'admin';
-  const password = generatePassword();
   db.prepare(
-    `INSERT INTO users (id, username, password_hash, role, must_change_password)
-     VALUES (?, ?, ?, 'admin', 1)`,
-  ).run(randomUUID(), username, await hashPassword(password));
+    `INSERT INTO audit_log (user_id, action, entity, entity_id, detail)
+     VALUES (NULL, 'recovery', 'user', NULL, 'Zugang über Marker-Datei zurückgesetzt')`,
+  ).run();
 
-  return { created: true, username, password };
+  unlinkSync(marker);
+  return { performed: true, username, password };
 }
 
-export function printFirstRunNotice(result: BootstrapResult): void {
-  if (!result.created || !result.password) return;
+export function printRecoveryNotice(result: RecoveryResult): void {
+  if (!result.performed) return;
   const line = '='.repeat(64);
   console.log(`\n${line}`);
-  console.log('  ERSTER START - Zugang für die Praxisleitung wurde angelegt');
+  console.log('  ZUGANG WURDE ZURÜCKGESETZT');
   console.log(line);
   console.log(`  Benutzername:  ${result.username}`);
   console.log(`  Passwort:      ${result.password}`);
   console.log('');
-  console.log('  Dieses Passwort wird nur dieses eine Mal angezeigt.');
-  console.log('  Beim ersten Anmelden muss es geändert werden.');
+  console.log('  Beim Anmelden muss dieses Passwort geändert werden.');
   console.log(`${line}\n`);
 }

@@ -2,11 +2,11 @@ import { existsSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { SERVER_HOST, SERVER_PORT, databaseFile } from './config.js';
+import { SERVER_HOST, SERVER_PORT, dataDirectory, databaseFile } from './config.js';
 import { openDatabase } from './db/index.js';
 import { runMigrations } from './db/migrate.js';
 import { isSeeded, seedDatabase } from './db/seed.js';
-import { ensureAdminAccount, printFirstRunNotice } from './auth/bootstrap.js';
+import { handleRecoveryMarker, needsSetup, printRecoveryNotice } from './auth/bootstrap.js';
 import { purgeExpiredSessions } from './auth/sessions.js';
 import { createApp } from './api/app.js';
 
@@ -55,7 +55,15 @@ async function main(): Promise<void> {
     console.log('[db] Praxis-Vorlage angelegt (Zeitmodell, Bereiche, Qualifikationen).');
   }
 
-  printFirstRunNotice(await ensureAdminAccount(db));
+  // Ein vergessenes Passwort laesst sich ueber eine Marker-Datei im
+  // Datenverzeichnis zuruecksetzen - siehe README.
+  printRecoveryNotice(await handleRecoveryMarker(db, dataDirectory()));
+
+  if (needsSetup(db)) {
+    console.log(
+      '[server] Noch kein Zugang angelegt - die Oberflaeche fuehrt durch die Einrichtung.',
+    );
+  }
   purgeExpiredSessions(db);
 
   const app = createApp(db, clientDirectory());

@@ -1,9 +1,10 @@
 import { Loader2, WifiOff } from 'lucide-react';
 import { Navigate, Route, Routes } from 'react-router-dom';
-import { useSession } from './api/queries';
+import { useSession, useSetupStatus } from './api/queries';
 import { AppShell } from './components/AppShell';
 import { ChangePasswordScreen } from './components/ChangePasswordScreen';
 import { LoginScreen } from './components/LoginScreen';
+import { SetupScreen } from './components/SetupScreen';
 import { AbsencesView } from './views/AbsencesView';
 import { AreasView } from './views/AreasView';
 import { DashboardView } from './views/DashboardView';
@@ -15,9 +16,10 @@ import { SettingsView } from './views/SettingsView';
 import { TimeModelView } from './views/TimeModelView';
 
 export default function App() {
+  const { data: needsSetup, isLoading: checkingSetup } = useSetupStatus();
   const { data: user, isLoading, error } = useSession();
 
-  if (isLoading) {
+  if (checkingSetup || isLoading) {
     return (
       <div className="flex min-h-full items-center justify-center text-slate-400">
         <Loader2 className="size-6 animate-spin" />
@@ -36,6 +38,12 @@ export default function App() {
         </p>
       </div>
     );
+  }
+
+  // Vor dem ersten Konto fuehrt die Einrichtung - ein Anmeldebildschirm
+  // waere hier eine Sackgasse.
+  if (needsSetup && !user) {
+    return <SetupScreen />;
   }
 
   if (!user) {

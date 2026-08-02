@@ -5,6 +5,7 @@ import type { Db } from '../db/index.js';
 import { attachUser, requireCsrf } from '../auth/middleware.js';
 import { HttpError } from './http.js';
 import { authRouter } from './routes/auth.js';
+import { setupRouter } from './routes/setup.js';
 import { employeesRouter } from './routes/employees.js';
 import {
   dayBlocksRouter,
@@ -49,11 +50,12 @@ export function createApp(db: Db, clientDir?: string): Express {
 
   app.use(attachUser);
 
-  // Der Login ist von der CSRF-Pruefung ausgenommen: vor der ersten
-  // Anmeldung gibt es noch kein Token, das man mitschicken koennte. Er ist
-  // trotzdem nicht ungeschuetzt - das Session-Cookie ist `SameSite=Lax`,
-  // und ohne Passwort kommt niemand durch.
-  const CSRF_EXEMPT = new Set(['/auth/login']);
+  // Login und Ersteinrichtung sind von der CSRF-Pruefung ausgenommen: vor
+  // der ersten Anmeldung gibt es noch kein Token, das man mitschicken
+  // koennte. Beide sind trotzdem nicht ungeschuetzt - das Session-Cookie
+  // ist `SameSite=Lax`, der Login braucht ein Passwort, und die
+  // Einrichtung greift nur, solange es kein einziges Konto gibt.
+  const CSRF_EXEMPT = new Set(['/auth/login', '/setup', '/setup/status']);
   app.use('/api', (req, res, next) => {
     if (CSRF_EXEMPT.has(req.path)) {
       next();
@@ -62,6 +64,7 @@ export function createApp(db: Db, clientDir?: string): Express {
     requireCsrf(req, res, next);
   });
 
+  app.use('/api/setup', setupRouter());
   app.use('/api/auth', authRouter());
   app.use('/api/employees', employeesRouter(), employeeWriteRouter());
   app.use('/api/work-areas', workAreasRouter());

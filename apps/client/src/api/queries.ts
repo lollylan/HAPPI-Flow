@@ -57,6 +57,30 @@ export function useSession() {
   });
 }
 
+/** Ob noch gar kein Konto existiert - dann fuehrt die Oberflaeche durch die Einrichtung. */
+export function useSetupStatus() {
+  return useQuery({
+    queryKey: ['setup', 'status'],
+    queryFn: async () => (await api<{ needsSetup: boolean }>('/setup/status')).needsSetup,
+    retry: false,
+    staleTime: Infinity,
+  });
+}
+
+export function useCompleteSetup() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { practiceName: string; username: string; password: string }) =>
+      api<{ user: SessionUser }>('/setup', { method: 'POST', body: input }),
+    onSuccess: ({ user }) => {
+      // Der Server meldet direkt an - ein zweites Passwortfeld waere unnoetig.
+      queryClient.setQueryData(queryKeys.me, user);
+      queryClient.setQueryData(['setup', 'status'], false);
+      void queryClient.invalidateQueries();
+    },
+  });
+}
+
 export function useLogin() {
   const queryClient = useQueryClient();
   return useMutation({

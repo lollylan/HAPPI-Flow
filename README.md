@@ -39,12 +39,33 @@ Ein Doppelklick auf `HÄPPI-Flow` startet die Anwendung samt internem Dienst. An
 Rechner im Praxisnetz erreichen sie im Browser unter `http://<IP des Praxis-PCs>:4173` –
 die genaue Adresse steht im Menü unter _Hilfe → Zugang im Praxisnetz_.
 
-Beim allerersten Start erzeugt die Anwendung ein Zufallspasswort für das
-Verwaltungskonto und zeigt es einmalig an. Es muss beim ersten Anmelden geändert
-werden. Es gibt bewusst kein fest eingebautes Standardpasswort.
+Beim allerersten Start führt die Anwendung selbst durch die Einrichtung: Praxisname,
+Benutzername und Passwort werden im Fenster festgelegt, danach ist man direkt
+angemeldet. Es gibt bewusst kein fest eingebautes Standardpasswort und kein
+Passwort, das irgendwo abgeschrieben werden müsste.
 
 Die Datenbank liegt unter `%APPDATA%\HAEPPI-Flow\haeppi.db` – nie im
 Projektverzeichnis und nie im Installer.
+
+### Zugang wiederherstellen
+
+Falls das Passwort der Praxisleitung verloren geht:
+
+1. HÄPPI-Flow schließen.
+2. Im Ordner `%APPDATA%\HAEPPI-Flow\` eine leere Datei namens
+   **`ZUGANG-ZURUECKSETZEN.txt`** anlegen.
+3. HÄPPI-Flow starten. Das neue Passwort steht in `server.log` im selben Ordner,
+   ganz unten unter „ZUGANG WURDE ZURÜCKGESETZT“. Beim Anmelden muss es geändert
+   werden.
+
+Die Marker-Datei wird dabei sofort gelöscht, alle offenen Sitzungen werden beendet
+und der Vorgang landet im Protokoll (`audit_log`).
+
+Bewusst über eine Datei und nicht über einen Knopf in der Oberfläche: so braucht es
+Zugriff auf das Dateisystem des Praxis-Rechners – dieselbe Hürde, die auch das
+Löschen der Datenbank hätte. Ein Knopf wäre für jede neugierige Kollegin einen Klick
+weit weg. Wer am Praxis-PC sitzt, kommt an die Daten; die eigentliche Grenze ist die
+Windows-Anmeldung, nicht diese Anwendung.
 
 ## Entwicklung
 
