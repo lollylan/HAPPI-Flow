@@ -352,31 +352,6 @@ export function SettingsView() {
                 </p>
             </div>
 
-            {/* Phase Info */}
-            <div className="glass-card rounded-xl p-5 mb-6">
-                <h3 className="text-sm font-semibold text-white mb-3">Entwicklungs-Roadmap</h3>
-                <div className="space-y-3">
-                    {[
-                        { phase: 'Phase 1', title: 'Stammdaten-Verwaltung', status: 'active', desc: 'CRUD für Mitarbeiter, Arbeitsbereiche und Fähigkeiten' },
-                        { phase: 'Phase 2', title: 'Schichtplanungs-Algorithmus', status: 'upcoming', desc: 'Automatische Besetzung, Rotation, Wochenansicht' },
-                        { phase: 'Phase 3', title: 'Urlaubs- & Schließzeit-Management', status: 'upcoming', desc: 'Praxisschließzeiten, Überstundenabbau, Verwaltungsdienst' },
-                        { phase: 'Phase 4', title: 'Drag & Drop Planung', status: 'upcoming', desc: 'Interaktive Wochenansicht mit manuellen Korrekturen' },
-                    ].map(item => (
-                        <div key={item.phase} className="flex items-start gap-3 p-3 rounded-lg bg-slate-900/30 border border-slate-700/15">
-                            <div className={`w-2 h-2 rounded-full mt-1.5 ${item.status === 'active' ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.5)]' : 'bg-slate-600'
-                                }`} />
-                            <div>
-                                <div className="flex items-center gap-2">
-                                    <span className="text-xs font-bold text-slate-300">{item.phase}</span>
-                                    <span className="text-xs text-slate-400">– {item.title}</span>
-                                    {item.status === 'active' && <span className="badge badge-success text-[9px]">Aktuell</span>}
-                                </div>
-                                <p className="text-[10px] text-slate-600 mt-0.5">{item.desc}</p>
-                            </div>
-                        </div>
-                    ))}
-                </div>
-            </div>
 
             {/* Reset */}
             <div className="glass-card rounded-xl p-5 border-rose-500/10">

@@ -13,7 +13,7 @@ function createWindow() {
     mainWindow = new BrowserWindow({
         width: 1400,
         height: 900,
-        title: "HÄPPI-Flow",
+        title: "H Flow",
         show: false, // show later when ready to avoid white flicker
         webPreferences: {
             nodeIntegration: false,

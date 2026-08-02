@@ -1,7 +1,10 @@
 export type CriticalTimeSlot = 'allday' | 'morning' | 'afternoon';
 
+export type EmployeeRole = 'mfa' | 'doctor';
+
 export interface WorkArea {
     id: string;
+    role: EmployeeRole;
     name: string;
     description: string;
     isCritical: boolean;
@@ -14,6 +17,7 @@ export interface WorkArea {
 
 export interface Skill {
     id: string;
+    role: EmployeeRole;
     name: string;
     description: string;
     category: string;
@@ -64,6 +68,7 @@ export type WeeklySlotTimes = Record<keyof WeeklyAvailability, DailySlotTimes>;
 
 export interface Employee {
     id: string;
+    role: EmployeeRole;
     firstName: string;
     lastName: string;
     username?: string;

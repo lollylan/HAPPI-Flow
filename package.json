@@ -13,7 +13,7 @@
   },
   "build": {
     "appId": "com.happi.flow",
-    "productName": "HÄPPI-Flow",
+    "productName": "H Flow",
     "win": {
       "target": "nsis"
     },

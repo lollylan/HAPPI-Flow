@@ -8,13 +8,14 @@ import {
 import {
     Employee, DEFAULT_AVAILABILITY, DAY_LABELS, DAY_FULL_LABELS,
     AVAILABILITY_OPTIONS, WeeklyAvailability, DayAvailability,
-    PreferenceLevel, WorkArea, AssignmentRule, WeeklyWorkTimes, DayWorkTime
+    PreferenceLevel, WorkArea, AssignmentRule, WeeklyWorkTimes, DayWorkTime, EmployeeRole
 } from '../types';
 import { store, useStore } from '../store';
 import { v4 as uuidv4 } from 'uuid';
 import { hashPassword } from './LoginScreen';
 
 interface EmployeeFormData {
+    role: EmployeeRole;
     firstName: string;
     lastName: string;
     status: 'fulltime' | 'parttime';
@@ -35,6 +36,7 @@ interface EmployeeFormData {
 }
 
 const emptyForm: EmployeeFormData = {
+    role: 'mfa',
     firstName: '',
     lastName: '',
     status: 'fulltime',
@@ -63,8 +65,14 @@ export function EmployeesView() {
     const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
     const [expandedId, setExpandedId] = useState<string | null>(null);
     const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'inactive'>('all');
+    const [activeRole, setActiveRole] = useState<EmployeeRole>('mfa');
 
-    const filteredEmployees = employees
+    const modalSkills = skills.filter(s => (s.role || 'mfa') === form.role);
+    const modalWorkAreas = workAreas.filter(a => (a.role || 'mfa') === form.role);
+
+    const roleEmployees = employees.filter(e => (e.role || 'mfa') === activeRole);
+
+    const filteredEmployees = roleEmployees
         .filter(e => {
             if (filterStatus === 'active') return e.isActive;
             if (filterStatus === 'inactive') return !e.isActive;
@@ -102,13 +110,14 @@ export function EmployeesView() {
     }
 
     function openCreate() {
-        setForm(emptyForm);
+        setForm({ ...emptyForm, role: activeRole });
         setEditingId(null);
         setShowModal(true);
     }
 
     function openEdit(emp: Employee) {
         setForm({
+            role: emp.role || 'mfa',
             firstName: emp.firstName,
             lastName: emp.lastName,
             status: emp.status,
@@ -215,8 +224,8 @@ export function EmployeesView() {
         }));
     }
 
-    const activeCount = employees.filter(e => e.isActive).length;
-    const inactiveCount = employees.filter(e => !e.isActive).length;
+    const activeCount = roleEmployees.filter(e => e.isActive).length;
+    const inactiveCount = roleEmployees.filter(e => !e.isActive).length;
 
     const availabilityColor = (val: DayWorkTime) => {
         if (!val.isWorking) return 'text-rose-400 bg-rose-500/15';
@@ -232,13 +241,24 @@ export function EmployeesView() {
         <div className="animate-fade-in">
             {/* Header */}
             <div className="flex items-center justify-between mb-6">
-                <div>
+                <div className="flex flex-col gap-3">
                     <h2 className="text-2xl font-bold text-white mb-1">Mitarbeiter</h2>
+                    {/* Role Tabs */}
+                    <div className="flex bg-slate-800 rounded-lg p-1 border border-slate-700 w-fit">
+                        <button
+                            onClick={() => setActiveRole('mfa')}
+                            className={`px-4 py-2 text-sm font-semibold rounded-md transition-colors ${activeRole === 'mfa' ? 'bg-primary-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+                        >MFA</button>
+                        <button
+                            onClick={() => setActiveRole('doctor')}
+                            className={`px-4 py-2 text-sm font-semibold rounded-md transition-colors ${activeRole === 'doctor' ? 'bg-primary-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+                        >Ärzte</button>
+                    </div>
                     <p className="text-slate-400 text-sm">
-                        {employees.length} gesamt · {activeCount} aktiv · {inactiveCount} inaktiv
+                        {roleEmployees.length} gesamt · {activeCount} aktiv · {inactiveCount} inaktiv
                     </p>
                 </div>
-                <button id="btn-add-employee" className="btn-primary" onClick={openCreate}>
+                <button id="btn-add-employee" className="btn-primary self-start" onClick={openCreate}>
                     <UserPlus size={16} />
                     Neuer Mitarbeiter
                 </button>
@@ -726,11 +746,11 @@ export function EmployeesView() {
                                     <div>
                                         <label className="block text-xs font-medium text-slate-400 mb-2">Fähigkeiten</label>
                                         <div className="bg-slate-900/30 rounded-xl p-3 border border-slate-700/30">
-                                            {skills.length === 0 ? (
+                                            {modalSkills.length === 0 ? (
                                                 <p className="text-xs text-slate-600">Keine Skills definiert.</p>
                                             ) : (
                                                 <div className="flex flex-wrap gap-1.5 max-h-40 overflow-y-auto custom-scrollbar">
-                                                    {skills.map(skill => (
+                                                    {modalSkills.map(skill => (
                                                         <button
                                                             key={skill.id}
                                                             className={`chip py-0.5 px-2 text-[10px] ${form.skills.includes(skill.id)
@@ -788,7 +808,7 @@ export function EmployeesView() {
                                     </div>
 
                                     <div className="grid gap-3">
-                                        {workAreas.map(area => {
+                                        {modalWorkAreas.map(area => {
                                             const pref = form.areaPreferences[area.id] || 'neutral';
                                             return (
                                                 <div key={area.id} className="p-3 bg-slate-900/40 rounded-xl border border-slate-700/30 flex items-center justify-between">
@@ -835,7 +855,7 @@ export function EmployeesView() {
                                                 </div>
                                             );
                                         })}
-                                        {workAreas.length === 0 && (
+                                        {modalWorkAreas.length === 0 && (
                                             <div className="text-center p-8 text-slate-500 text-xs border border-dashed border-slate-700/50 rounded-xl">
                                                 Keine Arbeitsbereiche definiert.
                                             </div>
@@ -858,7 +878,7 @@ export function EmployeesView() {
                                                     // I will assume I added `isAddingRule` state or I will just add a dummy rule directly and let user edit it? No.
                                                     // Let's us a simple approach: Just add a default rule and let them delete it? No.
                                                     // I'll keep it simple: Add a new rule for the first available area.
-                                                    if (workAreas.length > 0) addRule(workAreas[0].id, 'min', 1);
+                                                    if (modalWorkAreas.length > 0) addRule(modalWorkAreas[0].id, 'min', 1);
                                                 }}
                                             >
                                                 + Regel
@@ -867,7 +887,7 @@ export function EmployeesView() {
 
                                         <div className="space-y-2">
                                             {form.rules.map(rule => {
-                                                const area = workAreas.find(a => a.id === rule.workAreaId);
+                                                const area = modalWorkAreas.find(a => a.id === rule.workAreaId);
                                                 if (!area) return null;
                                                 return (
                                                     <div key={rule.id} className="flex items-center gap-2 bg-slate-900/40 p-2 rounded-lg border border-slate-700/30 text-xs">
@@ -879,7 +899,7 @@ export function EmployeesView() {
                                                                 setForm(prev => ({ ...prev, rules: updated }));
                                                             }}
                                                         >
-                                                            {workAreas.map(wa => (
+                                                            {modalWorkAreas.map(wa => (
                                                                 <option key={wa.id} value={wa.id} className="bg-slate-800 text-slate-200">
                                                                     {wa.name}
                                                                 </option>

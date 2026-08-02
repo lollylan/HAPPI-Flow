@@ -1,19 +1,21 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Plus, Pencil, Trash2, X, Check, Search, Tag } from 'lucide-react';
-import { Skill } from '../types';
+import { Skill, EmployeeRole } from '../types';
 import { store, useStore } from '../store';
 import { v4 as uuidv4 } from 'uuid';
 
 const SKILL_CATEGORIES = ['Medizinisch', 'Verwaltung', 'Sonstiges'];
 
 interface SkillFormData {
+    role: EmployeeRole;
     name: string;
     description: string;
     category: string;
 }
 
 const emptyForm: SkillFormData = {
+    role: 'mfa',
     name: '',
     description: '',
     category: 'Medizinisch',
@@ -27,8 +29,11 @@ export function SkillsView() {
     const [searchQuery, setSearchQuery] = useState('');
     const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
     const [filterCategory, setFilterCategory] = useState<string>('all');
+    const [activeRole, setActiveRole] = useState<EmployeeRole>('mfa');
 
-    const filteredSkills = skills
+    const roleSkills = skills.filter(s => (s.role || 'mfa') === activeRole);
+
+    const filteredSkills = roleSkills
         .filter(s =>
             s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
             s.description.toLowerCase().includes(searchQuery.toLowerCase())
@@ -44,13 +49,14 @@ export function SkillsView() {
     }, {} as Record<string, Skill[]>);
 
     function openCreate() {
-        setForm(emptyForm);
+        setForm({ ...emptyForm, role: activeRole });
         setEditingId(null);
         setShowModal(true);
     }
 
     function openEdit(skill: Skill) {
         setForm({
+            role: skill.role || 'mfa',
             name: skill.name,
             description: skill.description,
             category: skill.category,
@@ -79,8 +85,8 @@ export function SkillsView() {
     }
 
     function getSkillUsage(skillId: string) {
-        const empCount = employees.filter(e => e.skills.includes(skillId)).length;
-        const areaCount = workAreas.filter(a => a.requiredSkills.includes(skillId)).length;
+        const empCount = employees.filter(e => (e.role || 'mfa') === activeRole && e.skills.includes(skillId)).length;
+        const areaCount = workAreas.filter(a => (a.role || 'mfa') === activeRole && a.requiredSkills.includes(skillId)).length;
         return { empCount, areaCount };
     }
 
@@ -100,13 +106,26 @@ export function SkillsView() {
         <div className="animate-fade-in">
             {/* Header */}
             <div className="flex items-center justify-between mb-6">
-                <div>
+                <div className="flex flex-col gap-3">
                     <h2 className="text-2xl font-bold text-white mb-1">Fähigkeiten & Skills</h2>
+
+                    {/* Role Tabs */}
+                    <div className="flex bg-slate-800 rounded-lg p-1 border border-slate-700 w-fit">
+                        <button
+                            onClick={() => setActiveRole('mfa')}
+                            className={`px-4 py-2 text-sm font-semibold rounded-md transition-colors ${activeRole === 'mfa' ? 'bg-primary-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+                        >MFA</button>
+                        <button
+                            onClick={() => setActiveRole('doctor')}
+                            className={`px-4 py-2 text-sm font-semibold rounded-md transition-colors ${activeRole === 'doctor' ? 'bg-primary-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+                        >Ärzte</button>
+                    </div>
+
                     <p className="text-slate-400 text-sm">
-                        {skills.length} Qualifikationen verwalten
+                        {roleSkills.length} Qualifikationen verwalten
                     </p>
                 </div>
-                <button id="btn-add-skill" className="btn-primary" onClick={openCreate}>
+                <button id="btn-add-skill" className="btn-primary self-start" onClick={openCreate}>
                     <Plus size={16} />
                     Neue Fähigkeit
                 </button>

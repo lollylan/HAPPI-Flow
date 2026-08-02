@@ -67,7 +67,7 @@ export function LoginScreen({ adminPasswordHash, employees, onLogin }: Props) {
                     <div className="w-16 h-16 bg-slate-900/50 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-slate-700/50 shadow-inner">
                         <Lock className="text-accent-400" size={32} />
                     </div>
-                    <h2 className="text-2xl font-black tracking-tight text-white mb-1">HÄPPI-Flow</h2>
+                    <h2 className="text-2xl font-black tracking-tight text-white mb-1">H Flow</h2>
                     <p className="text-slate-400 text-sm">Bitte melden Sie sich an</p>
                 </div>
 

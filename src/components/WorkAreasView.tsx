@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Plus, Pencil, Trash2, X, Check, Search, AlertCircle, Users, Clock, ChevronUp, ChevronDown } from 'lucide-react';
-import { WorkArea, AREA_COLORS, AREA_ICONS, WeeklyAvailability, DAY_FULL_LABELS } from '../types';
+import { WorkArea, AREA_COLORS, AREA_ICONS, WeeklyAvailability, DAY_FULL_LABELS, EmployeeRole } from '../types';
 import { store, useStore } from '../store';
 import { v4 as uuidv4 } from 'uuid';
 
 interface AreaFormData {
+    role: EmployeeRole;
     name: string;
     description: string;
     isCritical: boolean;
@@ -25,6 +26,7 @@ const emptyOperatingHours = {
 } as Record<keyof WeeklyAvailability, ('morning' | 'noon' | 'afternoon')[]>;
 
 const emptyForm: AreaFormData = {
+    role: 'mfa',
     name: '',
     description: '',
     isCritical: false,
@@ -42,20 +44,24 @@ export function WorkAreasView() {
     const [form, setForm] = useState<AreaFormData>(emptyForm);
     const [searchQuery, setSearchQuery] = useState('');
     const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+    const [activeRole, setActiveRole] = useState<EmployeeRole>('mfa');
 
-    const filteredAreas = workAreas.filter(a =>
+    const roleAreas = workAreas.filter(a => (a.role || 'mfa') === activeRole);
+
+    const filteredAreas = roleAreas.filter(a =>
         a.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
         a.description.toLowerCase().includes(searchQuery.toLowerCase())
     );
 
     function openCreate() {
-        setForm(emptyForm);
+        setForm({ ...emptyForm, role: activeRole });
         setEditingId(null);
         setShowModal(true);
     }
 
     function openEdit(area: WorkArea) {
         setForm({
+            role: area.role || 'mfa',
             name: area.name,
             description: area.description,
             isCritical: area.isCritical,
@@ -113,20 +119,33 @@ export function WorkAreasView() {
         });
     }
 
-    const criticalCount = workAreas.filter(a => a.isCritical).length;
-    const optionalCount = workAreas.filter(a => !a.isCritical).length;
+    const criticalCount = roleAreas.filter(a => a.isCritical).length;
+    const optionalCount = roleAreas.filter(a => !a.isCritical).length;
 
     return (
         <div className="animate-fade-in">
             {/* Header */}
             <div className="flex items-center justify-between mb-6">
-                <div>
+                <div className="flex flex-col gap-3">
                     <h2 className="text-2xl font-bold text-white mb-1">Arbeitsbereiche</h2>
+
+                    {/* Role Tabs */}
+                    <div className="flex bg-slate-800 rounded-lg p-1 border border-slate-700 w-fit">
+                        <button
+                            onClick={() => setActiveRole('mfa')}
+                            className={`px-4 py-2 text-sm font-semibold rounded-md transition-colors ${activeRole === 'mfa' ? 'bg-primary-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+                        >MFA</button>
+                        <button
+                            onClick={() => setActiveRole('doctor')}
+                            className={`px-4 py-2 text-sm font-semibold rounded-md transition-colors ${activeRole === 'doctor' ? 'bg-primary-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+                        >Ärzte</button>
+                    </div>
+
                     <p className="text-slate-400 text-sm">
-                        {workAreas.length} Bereiche · {criticalCount} kritisch · {optionalCount} optional
+                        {roleAreas.length} Bereiche · {criticalCount} kritisch · {optionalCount} optional
                     </p>
                 </div>
-                <button id="btn-add-area" className="btn-primary" onClick={openCreate}>
+                <button id="btn-add-area" className="btn-primary self-start" onClick={openCreate}>
                     <Plus size={16} />
                     Neuer Bereich
                 </button>
@@ -411,11 +430,11 @@ export function WorkAreasView() {
                                 <div>
                                     <label className="block text-xs font-medium text-slate-400 mb-1.5">Benötigte Fähigkeiten</label>
                                     <div className="bg-slate-900/30 rounded-xl p-3 border border-slate-700/30 max-h-60 overflow-y-auto custom-scrollbar">
-                                        {skills.length === 0 ? (
+                                        {skills.filter(s => (s.role || 'mfa') === form.role).length === 0 ? (
                                             <p className="text-xs text-slate-600">Keine Skills zugewiesen.</p>
                                         ) : (
                                             <div className="flex flex-wrap gap-2">
-                                                {skills.map(skill => (
+                                                {skills.filter(s => (s.role || 'mfa') === form.role).map(skill => (
                                                     <button
                                                         key={skill.id}
                                                         className={`chip py-0.5 px-2 text-[10px] ${form.requiredSkills.includes(skill.id)

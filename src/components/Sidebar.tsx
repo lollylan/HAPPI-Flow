@@ -69,7 +69,7 @@ export function Sidebar() {
                     H
                 </div>
                 <div>
-                    <h1 className="text-lg font-bold text-white tracking-tight">HÄPPI-Flow</h1>
+                    <h1 className="text-lg font-bold text-white tracking-tight">H Flow</h1>
                     <p className="text-[10px] text-slate-400 font-medium tracking-wider uppercase">Praxisplanung</p>
                 </div>
             </div>
@@ -180,7 +180,7 @@ export function Sidebar() {
             {/* Footer */}
             <div className="px-4 py-3 border-t border-slate-700/30">
                 <p className="text-[10px] text-slate-500 text-center">
-                    HÄPPI-Flow v1.1
+                    H Flow v1.1
                 </p>
             </div>
         </aside>

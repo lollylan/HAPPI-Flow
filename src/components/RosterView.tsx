@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useStore, store } from '../store';
-import { Assignment, WeeklyAvailability, Employee } from '../types';
+import { Assignment, WeeklyAvailability, Employee, EmployeeRole } from '../types';
 import { Sparkles, RefreshCw, X, AlertTriangle, Lock, Unlock, Plus, Trash2, User, ChevronLeft, ChevronRight, Calendar as CalendarIcon, Printer, Filter } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import { toJpeg } from 'html-to-image';
@@ -9,7 +9,12 @@ import { useAuth } from '../AuthContext';
 import React from 'react';
 
 export function RosterView() {
-    const { employees, workAreas, assignments, absences, slotSettings } = useStore();
+    const { employees: allEmployees, workAreas: allWorkAreas, assignments, absences, slotSettings } = useStore();
+    const [activeRole, setActiveRole] = useState<EmployeeRole>('mfa');
+
+    const employees = useMemo(() => allEmployees.filter(e => (e.role || 'mfa') === activeRole), [allEmployees, activeRole]);
+    const workAreas = useMemo(() => allWorkAreas.filter(a => (a.role || 'mfa') === activeRole), [allWorkAreas, activeRole]);
+
     const [isGenerating, setIsGenerating] = useState(false);
     const [selectedSlot, setSelectedSlot] = useState<{ areaId: string, day: keyof WeeklyAvailability, slot: 'morning' | 'noon' | 'afternoon' } | null>(null);
     const [rosterWarnings, setRosterWarnings] = useState<string[]>([]);
@@ -117,8 +122,10 @@ export function RosterView() {
         setRosterWarnings([]);
         setTimeout(() => {
             const warnings: string[] = [];
-            // Keep locked assignments for THIS week
-            const lockedAssignments = currentAssignments.filter(a => a.isLocked);
+            const currentRoleAreaIds = new Set(workAreas.map(a => a.id));
+
+            // Keep locked assignments for THIS week for the CURRENT role
+            const lockedAssignments = currentAssignments.filter(a => a.isLocked && currentRoleAreaIds.has(a.workAreaId));
             const newAssignmentsForWeek: Assignment[] = [...lockedAssignments];
 
             // Setup Rule Counts (Global or Weekly)
@@ -272,9 +279,14 @@ export function RosterView() {
                 }
             }
 
-            // Update Store: Remove assignments for this week, add new ones
-            const otherAssignments = assignments.filter(a => !(a.date >= weekDates.monday && a.date <= weekDates.friday));
-            store.setAssignments([...otherAssignments, ...newAssignmentsForWeek]);
+            // Update Store: Remove assignments for this week for the current role, add new ones and keep the rest
+            const assignmentsToKeep = assignments.filter(a => {
+                const isThisWeek = a.date >= weekDates.monday && a.date <= weekDates.friday;
+                if (!isThisWeek) return true;
+                if (!currentRoleAreaIds.has(a.workAreaId)) return true;
+                return false;
+            });
+            store.setAssignments([...assignmentsToKeep, ...newAssignmentsForWeek]);
             setRosterWarnings(warnings);
             setIsGenerating(false);
         }, 800);
@@ -322,10 +334,14 @@ export function RosterView() {
     return (
         <div className="animate-fade-in space-y-6 pb-20">
             {/* Header */}
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <div>
+            <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
+                <div className="flex flex-col gap-2">
                     <h2 className="text-2xl font-bold text-white mb-1">Dienstplan</h2>
-                    <p className="text-slate-400 text-sm">Automatische Zuweisung mit Regeln & Fixierung</p>
+                    {/* Role Tabs */}
+                    <div className="flex bg-slate-800 rounded-lg p-1 border border-slate-700 w-fit">
+                        <button onClick={() => setActiveRole('mfa')} className={`px-4 py-2 text-sm font-semibold rounded-md transition-colors ${activeRole === 'mfa' ? 'bg-primary-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}>MFA</button>
+                        <button onClick={() => setActiveRole('doctor')} className={`px-4 py-2 text-sm font-semibold rounded-md transition-colors ${activeRole === 'doctor' ? 'bg-primary-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}>Ärzte</button>
+                    </div>
                 </div>
 
                 <div className="flex items-center gap-4">
@@ -406,9 +422,15 @@ export function RosterView() {
                     {!isEmployee && (
                         <button
                             onClick={() => {
-                                if (confirm('Alle Einträge dieser Woche löschen?')) {
-                                    const otherAssignments = assignments.filter(a => !(a.date >= weekDates.monday && a.date <= weekDates.friday));
-                                    store.setAssignments(otherAssignments);
+                                if (confirm('Alle Einträge dieser Woche für die aktuelle Rolle löschen?')) {
+                                    const currentRoleAreaIds = new Set(workAreas.map(a => a.id));
+                                    const assignmentsToKeep = assignments.filter(a => {
+                                        const isThisWeek = a.date >= weekDates.monday && a.date <= weekDates.friday;
+                                        if (!isThisWeek) return true;
+                                        if (!currentRoleAreaIds.has(a.workAreaId)) return true;
+                                        return false;
+                                    });
+                                    store.setAssignments(assignmentsToKeep);
                                 }
                             }}
                             className="p-3 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 rounded-lg border border-rose-500/30 transition-colors"

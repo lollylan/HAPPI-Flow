@@ -111,7 +111,7 @@ app.use((req, res, next) => {
 
 // Start Server and automatically launch browser
 const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`\n🚀 HÄPPI-Flow is starting...`);
+    console.log(`\n🚀 H Flow is starting...`);
     console.log(`📡 Local server: http://localhost:${PORT}`);
     console.log(`(Opening in your browser immediately...)`);
 

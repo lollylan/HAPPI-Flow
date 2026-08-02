@@ -525,7 +525,7 @@ export function VacationView() {
                                     <div className="text-slate-500 font-medium text-lg mt-1">{monthLabel}</div>
                                 </div>
                                 <div className="text-right">
-                                    <div className="text-sm font-bold text-slate-400 uppercase tracking-widest bg-slate-100 px-3 py-1 rounded inline-block mb-1">HÄPPI-Flow</div>
+                                    <div className="text-sm font-bold text-slate-400 uppercase tracking-widest bg-slate-100 px-3 py-1 rounded inline-block mb-1">H Flow</div>
                                     <div className="text-xs text-slate-500">Druckdatum: {new Date().toLocaleDateString('de-DE')}</div>
                                 </div>
                             </div>
@@ -587,67 +587,87 @@ export function VacationView() {
                                 </div>
                             </div>
 
-                            {/* Employee Rows */}
-                            {employees.filter(e => e.isActive).map((emp, idx) => (
-                                <div key={emp.id} className={`flex border-b border-slate-700/30 hover:bg-slate-700/20 transition-colors h-10 group relative ${idx % 2 === 0 ? 'bg-slate-800/10' : ''}`}>
-                                    {/* Hover Guide - helps to see which row you are tracking */}
-                                    <div className="absolute inset-0 pointer-events-none group-hover:bg-slate-600/10 z-0"></div>
+                            {/* Employee Rows Grouped by Role */}
+                            {[
+                                { roleId: 'mfa', label: 'MFA' },
+                                { roleId: 'doctor', label: 'Ärzte' }
+                            ].map(({ roleId, label }) => {
+                                const roleEmps = employees.filter(e => e.isActive && (e.role || 'mfa') === roleId);
+                                if (roleEmps.length === 0) return null;
 
-                                    {/* Name Column */}
-                                    <div className={`w-56 px-4 flex items-center justify-between shrink-0 border-r border-slate-700/50 sticky left-0 z-10 transition-colors bg-slate-900/95 group-hover:bg-slate-800/95`}>
-                                        <div className="flex items-center gap-2 truncate">
-                                            <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold bg-slate-800 text-slate-400 shrink-0`}>
-                                                {emp.firstName[0]}{emp.lastName[0]}
+                                return (
+                                    <React.Fragment key={roleId}>
+                                        {/* Group Header Row */}
+                                        <div className="flex border-b border-slate-700/80 bg-slate-800/40 h-8 relative">
+                                            <div className="w-56 px-4 flex items-center shrink-0 border-r border-slate-700/50 sticky left-0 z-20 bg-slate-800/90 text-xs font-bold text-slate-400 uppercase tracking-wider">
+                                                {label}
                                             </div>
-                                            <span className="text-sm truncate text-slate-300">
-                                                {emp.firstName} {emp.lastName}
-                                            </span>
-                                        </div>
-                                        {renderVacationCounter(emp)}
-                                    </div>
-
-                                    {/* Timeline Columns */}
-                                    <div className="flex-1 relative overflow-hidden">
-                                        {/* Watermark */}
-                                        <div className={`absolute inset-0 ${isExporting ? 'hidden' : 'flex'} items-center justify-center text-4xl font-black text-slate-300/5 pointer-events-none tracking-[0.5em] uppercase whitespace-nowrap z-0 selection:bg-transparent`}>
-                                            {emp.firstName} {emp.lastName}
+                                            <div className="flex-1 bg-slate-800/10"></div>
                                         </div>
 
-                                        {/* Grid Lines Background and Interaction */}
-                                        <div className="absolute inset-0 flex z-0">
-                                            {days.map(d => (
-                                                <div
-                                                    key={d.date}
-                                                    onClick={() => openCreateForDate(emp.id, d.iso)}
-                                                    title={`Klick: Neuer Eintrag für ${emp.id === 'praxis' ? 'Praxisurlaub' : emp.firstName} am ${d.date}.${month + 1}.`}
-                                                    className={`flex-1 border-r border-slate-800/50 cursor-pointer hover:bg-white/5 transition-colors ${d.isWeekend ? 'bg-slate-800/20' : ''}`}
-                                                />
-                                            ))}
-                                        </div>
+                                        {roleEmps.map((emp, idx) => (
+                                            <div key={emp.id} className={`flex border-b border-slate-700/30 hover:bg-slate-700/20 transition-colors h-10 group relative ${idx % 2 === 0 ? 'bg-slate-800/10' : ''}`}>
+                                                {/* Hover Guide - helps to see which row you are tracking */}
+                                                <div className="absolute inset-0 pointer-events-none group-hover:bg-slate-600/10 z-0"></div>
 
-                                        {/* Bars */}
-                                        {absences
-                                            .filter(a => a.employeeId === emp.id)
-                                            .map(absence => {
-                                                const style = getAbsenceStyle(absence);
-                                                if (!style) return null;
-                                                return (
-                                                    <div
-                                                        key={absence.id}
-                                                        style={{ left: style.left, width: style.width }}
-                                                        className={style.className}
-                                                        onClick={() => openEdit(absence)}
-                                                        title={`${emp.firstName} (${absence.status === 'requested' ? 'Wunschplanung' : 'Fest'}): ${absence.notes || (absence.type === 'vacation' ? 'Urlaub' : absence.type === 'sick' ? 'Krank' : absence.type === 'overtime' ? 'Überstundenabbau' : 'Fortbildung')}\n${new Date(absence.startDate).toLocaleDateString()} - ${new Date(absence.endDate).toLocaleDateString()}`}
-                                                    >
-                                                        {style.icon}
-                                                        <span className="truncate flex-1">{(absence.status === 'requested' ? 'Wunschplanung: ' : '') + (absence.type === 'vacation' ? 'Urlaub' : absence.type === 'sick' ? 'Krank' : absence.type === 'overtime' ? 'Überstunden' : 'Fortbildung')}</span>
+                                                {/* Name Column */}
+                                                <div className={`w-56 px-4 flex items-center justify-between shrink-0 border-r border-slate-700/50 sticky left-0 z-10 transition-colors bg-slate-900/95 group-hover:bg-slate-800/95`}>
+                                                    <div className="flex items-center gap-2 truncate">
+                                                        <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold bg-slate-800 text-slate-400 shrink-0`}>
+                                                            {emp.firstName[0]}{emp.lastName[0]}
+                                                        </div>
+                                                        <span className="text-sm truncate text-slate-300">
+                                                            {emp.firstName} {emp.lastName}
+                                                        </span>
                                                     </div>
-                                                );
-                                            })
-                                        }
-                                    </div>
-                                </div>
-                            ))}
+                                                    {renderVacationCounter(emp)}
+                                                </div>
+
+                                                {/* Timeline Columns */}
+                                                <div className="flex-1 relative overflow-hidden">
+                                                    {/* Watermark */}
+                                                    <div className={`absolute inset-0 ${isExporting ? 'hidden' : 'flex'} items-center justify-center text-4xl font-black text-slate-300/5 pointer-events-none tracking-[0.5em] uppercase whitespace-nowrap z-0 selection:bg-transparent`}>
+                                                        {emp.firstName} {emp.lastName}
+                                                    </div>
+
+                                                    {/* Grid Lines Background and Interaction */}
+                                                    <div className="absolute inset-0 flex z-0">
+                                                        {days.map(d => (
+                                                            <div
+                                                                key={d.date}
+                                                                onClick={() => openCreateForDate(emp.id, d.iso)}
+                                                                title={`Klick: Neuer Eintrag für ${emp.id === 'praxis' ? 'Praxisurlaub' : emp.firstName} am ${d.date}.${month + 1}.`}
+                                                                className={`flex-1 border-r border-slate-800/50 cursor-pointer hover:bg-white/5 transition-colors ${d.isWeekend ? 'bg-slate-800/20' : ''}`}
+                                                            />
+                                                        ))}
+                                                    </div>
+
+                                                    {/* Bars */}
+                                                    {absences
+                                                        .filter(a => a.employeeId === emp.id)
+                                                        .map(absence => {
+                                                            const style = getAbsenceStyle(absence);
+                                                            if (!style) return null;
+                                                            return (
+                                                                <div
+                                                                    key={absence.id}
+                                                                    style={{ left: style.left, width: style.width }}
+                                                                    className={style.className}
+                                                                    onClick={() => openEdit(absence)}
+                                                                    title={`${emp.firstName} (${absence.status === 'requested' ? 'Wunschplanung' : 'Fest'}): ${absence.notes || (absence.type === 'vacation' ? 'Urlaub' : absence.type === 'sick' ? 'Krank' : absence.type === 'overtime' ? 'Überstundenabbau' : 'Fortbildung')}\n${new Date(absence.startDate).toLocaleDateString()} - ${new Date(absence.endDate).toLocaleDateString()}`}
+                                                                >
+                                                                    {style.icon}
+                                                                    <span className="truncate flex-1">{(absence.status === 'requested' ? 'Wunschplanung: ' : '') + (absence.type === 'vacation' ? 'Urlaub' : absence.type === 'sick' ? 'Krank' : absence.type === 'overtime' ? 'Überstunden' : 'Fortbildung')}</span>
+                                                                </div>
+                                                            );
+                                                        })
+                                                    }
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </React.Fragment>
+                                );
+                            })}
                         </div>
                     </>
                 ) : (
@@ -664,7 +684,7 @@ export function VacationView() {
                                         </div>
                                     </div>
                                     <div className="text-right">
-                                        <div className="text-sm font-bold text-slate-400 uppercase tracking-widest bg-slate-100 px-3 py-1 rounded inline-block mb-1">HÄPPI-Flow</div>
+                                        <div className="text-sm font-bold text-slate-400 uppercase tracking-widest bg-slate-100 px-3 py-1 rounded inline-block mb-1">H Flow</div>
                                         <div className="text-xs text-slate-500">Druckdatum: {new Date().toLocaleDateString('de-DE')}</div>
                                     </div>
                                 </div>

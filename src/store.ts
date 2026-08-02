@@ -6,34 +6,34 @@ const STORAGE_KEY = 'happi-flow-data';
 
 // ===== SEED DATA =====
 const seedSkills: Skill[] = [
-    { id: uuidv4(), name: 'Blutentnahme', description: 'Venöse und kapillare Blutentnahme', category: 'Medizinisch' },
-    { id: uuidv4(), name: 'Impfen', description: 'Durchführung von Impfungen', category: 'Medizinisch' },
-    { id: uuidv4(), name: 'EKG', description: 'EKG schreiben und anlegen', category: 'Medizinisch' },
-    { id: uuidv4(), name: 'Lungenfunktion', description: 'Spirometrie durchführen', category: 'Medizinisch' },
-    { id: uuidv4(), name: 'Abrechnung', description: 'KV- und Privatabrechnung', category: 'Verwaltung' },
-    { id: uuidv4(), name: 'Rezeption', description: 'Patientenannahme und Terminvergabe', category: 'Verwaltung' },
-    { id: uuidv4(), name: 'Wundversorgung', description: 'Verbandswechsel und Wundmanagement', category: 'Medizinisch' },
+    { id: uuidv4(), role: 'mfa', name: 'Blutentnahme', description: 'Venöse und kapillare Blutentnahme', category: 'Medizinisch' },
+    { id: uuidv4(), role: 'mfa', name: 'Impfen', description: 'Durchführung von Impfungen', category: 'Medizinisch' },
+    { id: uuidv4(), role: 'mfa', name: 'EKG', description: 'EKG schreiben und anlegen', category: 'Medizinisch' },
+    { id: uuidv4(), role: 'mfa', name: 'Lungenfunktion', description: 'Spirometrie durchführen', category: 'Medizinisch' },
+    { id: uuidv4(), role: 'mfa', name: 'Abrechnung', description: 'KV- und Privatabrechnung', category: 'Verwaltung' },
+    { id: uuidv4(), role: 'mfa', name: 'Rezeption', description: 'Patientenannahme und Terminvergabe', category: 'Verwaltung' },
+    { id: uuidv4(), role: 'mfa', name: 'Wundversorgung', description: 'Verbandswechsel und Wundmanagement', category: 'Medizinisch' },
 ];
 
 const seedWorkAreas: WorkArea[] = [
     {
-        id: uuidv4(), name: 'Anmeldung', description: 'Patientenempfang und Terminmanagement', isCritical: true, minStaff: 2, requiredSkills: [], icon: '📋', color: '#3b82f6',
+        id: uuidv4(), role: 'mfa', name: 'Anmeldung', description: 'Patientenempfang und Terminmanagement', isCritical: true, minStaff: 2, requiredSkills: [], icon: '📋', color: '#3b82f6',
         operatingHours: { monday: ['morning', 'noon', 'afternoon'], tuesday: ['morning', 'noon', 'afternoon'], wednesday: ['morning', 'noon', 'afternoon'], thursday: ['morning', 'noon', 'afternoon'], friday: ['morning', 'noon', 'afternoon'] }
     },
     {
-        id: uuidv4(), name: 'Labor', description: 'Blutentnahme und Labordiagnostik', isCritical: true, minStaff: 1, requiredSkills: [], icon: '🔬', color: '#8b5cf6',
+        id: uuidv4(), role: 'mfa', name: 'Labor', description: 'Blutentnahme und Labordiagnostik', isCritical: true, minStaff: 1, requiredSkills: [], icon: '🔬', color: '#8b5cf6',
         operatingHours: { monday: ['morning'], tuesday: ['morning'], wednesday: ['morning'], thursday: ['morning'], friday: ['morning'] }
     },
     {
-        id: uuidv4(), name: 'Notfall-Zimmer', description: 'Akutversorgung und Notfälle', isCritical: true, minStaff: 1, requiredSkills: [], icon: '🚑', color: '#ef4444',
+        id: uuidv4(), role: 'mfa', name: 'Notfall-Zimmer', description: 'Akutversorgung und Notfälle', isCritical: true, minStaff: 1, requiredSkills: [], icon: '🚑', color: '#ef4444',
         operatingHours: { monday: ['morning', 'noon', 'afternoon'], tuesday: ['morning', 'noon', 'afternoon'], wednesday: ['morning', 'noon', 'afternoon'], thursday: ['morning', 'noon', 'afternoon'], friday: ['morning', 'noon', 'afternoon'] }
     },
     {
-        id: uuidv4(), name: 'Backoffice', description: 'Verwaltungsaufgaben und Abrechnung', isCritical: false, minStaff: 0, requiredSkills: [], icon: '🗂️', color: '#f59e0b',
+        id: uuidv4(), role: 'mfa', name: 'Backoffice', description: 'Verwaltungsaufgaben und Abrechnung', isCritical: false, minStaff: 0, requiredSkills: [], icon: '🗂️', color: '#f59e0b',
         operatingHours: { monday: ['morning', 'noon', 'afternoon'], tuesday: ['morning', 'noon', 'afternoon'], wednesday: ['morning', 'noon', 'afternoon'], thursday: ['morning', 'noon', 'afternoon'], friday: ['morning', 'noon', 'afternoon'] }
     },
     {
-        id: uuidv4(), name: 'Homeoffice', description: 'Remote-Arbeit von Zuhause', isCritical: false, minStaff: 0, requiredSkills: [], icon: '🏠', color: '#10b981',
+        id: uuidv4(), role: 'mfa', name: 'Homeoffice', description: 'Remote-Arbeit von Zuhause', isCritical: false, minStaff: 0, requiredSkills: [], icon: '🏠', color: '#10b981',
         operatingHours: { monday: ['morning', 'noon', 'afternoon'], tuesday: ['morning', 'noon', 'afternoon'], wednesday: ['morning', 'noon', 'afternoon'], thursday: ['morning', 'noon', 'afternoon'], friday: ['morning', 'noon', 'afternoon'] }
     },
 ];
@@ -60,6 +60,7 @@ function migrateData(data: any): AppState {
     if (data.workAreas) {
         data.workAreas.forEach((area: any) => {
             if (!area.requiredSkills) area.requiredSkills = [];
+            if (!area.role) area.role = 'mfa';
 
             // Re-structure to ensure array
             const defaultHours = {
@@ -82,6 +83,12 @@ function migrateData(data: any): AppState {
         });
     }
 
+    if (data.skills) {
+        data.skills.forEach((skill: any) => {
+            if (!skill.role) skill.role = 'mfa';
+        });
+    }
+
     if (!data.slotSettings) {
         data.slotSettings = defaultSlotSettings;
     } else {
@@ -100,6 +107,7 @@ function migrateData(data: any): AppState {
     if (data.employees) {
         // Migrate and inject missing properties for older employee states
         data.employees.forEach((emp: any) => {
+            if (emp.role === undefined) emp.role = 'mfa';
             if (emp.username === undefined) emp.username = '';
             if (emp.passwordHash === undefined) emp.passwordHash = '';
             if (emp.vacationDaysTotal === undefined) emp.vacationDaysTotal = 30;
