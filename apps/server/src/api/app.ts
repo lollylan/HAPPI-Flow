@@ -14,6 +14,7 @@ import {
   workAreasRouter,
 } from './routes/stammdaten.js';
 import { rosterRouter, templateRouter } from './routes/roster.js';
+import { absencesRouter, closuresRouter, recurringAbsencesRouter } from './routes/absences.js';
 
 /**
  * Baut die Express-App ohne sie zu starten.
@@ -69,6 +70,9 @@ export function createApp(db: Db): Express {
   app.use('/api/settings', settingsRouter());
   app.use('/api/roster', rosterRouter());
   app.use('/api/templates', templateRouter());
+  app.use('/api/absences', absencesRouter());
+  app.use('/api/closures', closuresRouter());
+  app.use('/api/recurring-absences', recurringAbsencesRouter());
 
   app.use('/api', (_req, res) => {
     res.status(404).json({ error: 'Unbekannter Endpunkt.' });

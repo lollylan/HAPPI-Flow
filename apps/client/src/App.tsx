@@ -7,6 +7,7 @@ import { LoginScreen } from './components/LoginScreen';
 import { DashboardView } from './views/DashboardView';
 import { EmployeesView } from './views/EmployeesView';
 import { MatrixView } from './views/MatrixView';
+import { RosterView } from './views/RosterView';
 import { SettingsView } from './views/SettingsView';
 
 export default function App() {
@@ -48,6 +49,7 @@ export default function App() {
       <Route element={<AppShell user={user} />}>
         <Route index element={<DashboardView user={user} />} />
         <Route path="mitarbeiter" element={<EmployeesView user={user} />} />
+        <Route path="dienstplan" element={<RosterView user={user} />} />
         {user.role === 'admin' && (
           <>
             <Route path="matrix" element={<MatrixView />} />

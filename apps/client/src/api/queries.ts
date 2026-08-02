@@ -1,11 +1,20 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
+  Absence,
+  AbsenceType,
+  Assignment,
   DayBlock,
+  Diagnostic,
   Employee,
   HolidaySettings,
   MatrixEntry,
+  PlanKind,
+  PlannedAssignment,
+  PublicAbsence,
   SessionUser,
   Skill,
+  TemplateAssignment,
+  VacationBalance,
   WorkArea,
 } from '@haeppi/shared';
 import { ApiError, api } from './client';
@@ -263,6 +272,170 @@ export function useMatrix() {
 }
 
 export type MatrixEntryInput = Omit<MatrixEntry, 'employeeId'>;
+
+// ------------------------------------------------------------ Dienstplan --
+
+export const rosterKey = (from: string, to: string, plan: PlanKind) =>
+  ['roster', from, to, plan] as const;
+
+export function useRoster(from: string, to: string, plan: PlanKind) {
+  return useQuery({
+    queryKey: rosterKey(from, to, plan),
+    queryFn: async () =>
+      (await api<{ assignments: Assignment[] }>(`/roster?from=${from}&to=${to}&plan=${plan}`))
+        .assignments,
+  });
+}
+
+export interface GenerateResult {
+  weekStart: string;
+  plan: PlanKind;
+  dryRun: boolean;
+  assignments: PlannedAssignment[];
+  diagnostics: Diagnostic[];
+  score: number;
+}
+
+export function useGenerateRoster() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { weekStart: string; plan: PlanKind; dryRun?: boolean }) =>
+      api<GenerateResult>('/roster/generate', { method: 'POST', body: input }),
+    onSuccess: (result) => {
+      if (!result.dryRun) void queryClient.invalidateQueries({ queryKey: ['roster'] });
+    },
+  });
+}
+
+export function useCreateAssignment() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: {
+      date: string;
+      dayBlockId: string;
+      workAreaId: string;
+      employeeId: string;
+    }) => api<{ assignment: Assignment }>('/roster/assignments', { method: 'POST', body: input }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['roster'] }),
+  });
+}
+
+export function useDeleteAssignment() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api<void>(`/roster/assignments/${id}`, { method: 'DELETE' }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['roster'] }),
+  });
+}
+
+export function useToggleLock() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, locked }: { id: string; locked: boolean }) =>
+      api<{ assignment: Assignment }>(`/roster/assignments/${id}/lock`, {
+        method: 'POST',
+        body: { locked },
+      }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['roster'] }),
+  });
+}
+
+export function useTemplate(plan: PlanKind) {
+  return useQuery({
+    queryKey: ['template', plan],
+    queryFn: async () =>
+      (await api<{ entries: TemplateAssignment[] }>(`/templates/${plan}`)).entries,
+  });
+}
+
+export function useSaveTemplate() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      plan,
+      entries,
+    }: {
+      plan: PlanKind;
+      entries: Omit<TemplateAssignment, 'id'>[];
+    }) =>
+      api<{ entries: TemplateAssignment[] }>(`/templates/${plan}`, {
+        method: 'PUT',
+        body: { entries },
+      }),
+    onSuccess: (_result, variables) =>
+      void queryClient.invalidateQueries({ queryKey: ['template', variables.plan] }),
+  });
+}
+
+// --------------------------------------------------------- Abwesenheiten --
+
+export function useAbsences(from: string, to: string) {
+  return useQuery({
+    queryKey: ['absences', from, to],
+    queryFn: async () =>
+      (await api<{ absences: (Absence | PublicAbsence)[] }>(`/absences?from=${from}&to=${to}`))
+        .absences,
+  });
+}
+
+export function useOpenRequestCount(enabled: boolean) {
+  return useQuery({
+    queryKey: ['absences', 'open-requests'],
+    queryFn: async () => (await api<{ count: number }>('/absences/open-requests')).count,
+    enabled,
+  });
+}
+
+export function useCreateAbsence() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: {
+      employeeId: string;
+      startDate: string;
+      endDate: string;
+      type: AbsenceType;
+      halfDay?: 'am' | 'pm' | null;
+      note?: string;
+    }) => api<{ absence: Absence }>('/absences', { method: 'POST', body: input }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['absences'] });
+      void queryClient.invalidateQueries({ queryKey: ['vacation'] });
+    },
+  });
+}
+
+export function useDecideAbsence() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, status }: { id: string; status: 'approved' | 'rejected' }) =>
+      api<{ absence: Absence }>(`/absences/${id}/decide`, { method: 'POST', body: { status } }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['absences'] }),
+  });
+}
+
+export function useDeleteAbsence() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api<void>(`/absences/${id}`, { method: 'DELETE' }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['absences'] });
+      void queryClient.invalidateQueries({ queryKey: ['vacation'] });
+    },
+  });
+}
+
+export function useVacationBalance(employeeId: string | null, year: number) {
+  return useQuery({
+    queryKey: ['vacation', employeeId, year],
+    queryFn: async () =>
+      api<{
+        year: number;
+        account: { entitlement: number; carryover: number };
+        balance: VacationBalance;
+      }>(`/absences/vacation/${employeeId}?year=${year}`),
+    enabled: employeeId !== null,
+  });
+}
 
 export function useSaveMatrixRow() {
   const queryClient = useQueryClient();

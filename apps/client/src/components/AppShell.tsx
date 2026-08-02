@@ -32,7 +32,7 @@ const NAV: readonly { section: string; entries: readonly NavEntry[] }[] = [
   {
     section: 'Planung',
     entries: [
-      { to: '/dienstplan', label: 'Dienstplan', icon: CalendarDays, planned: true },
+      { to: '/dienstplan', label: 'Dienstplan', icon: CalendarDays },
       { to: '/abwesenheiten', label: 'Abwesenheiten', icon: Palmtree, planned: true },
     ],
   },
