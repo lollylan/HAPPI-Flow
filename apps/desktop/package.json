@@ -8,8 +8,16 @@
   "main": "dist/main.js",
   "scripts": {
     "build": "tsc -b",
-    "start": "npm run build && electron .",
+    "start": "npm run build && node scripts/prepare-resources.mjs && electron .",
     "package": "node scripts/prepare-resources.mjs && electron-builder --win --config electron-builder.yml"
+  },
+  "dependencies": {
+    "@haeppi/shared": "*",
+    "@node-rs/argon2": "^2.0.2",
+    "cookie-parser": "^1.4.7",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.6.1",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "electron": "40.10.6",

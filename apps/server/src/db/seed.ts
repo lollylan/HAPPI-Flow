@@ -314,8 +314,18 @@ export function seedDatabase(db: Db): void {
     }
 
     for (const area of [...SEED_AREAS, ...SEED_ROOMS]) {
+      // Bewusst nur die Felder, die im SQL vorkommen: node:sqlite lehnt
+      // unbekannte benannte Parameter ab - das faengt Tippfehler auf.
       insertArea.run({
-        ...area,
+        id: area.id,
+        plan: area.plan,
+        name: area.name,
+        description: area.description,
+        kind: area.kind,
+        icon: area.icon,
+        color: area.color,
+        sortOrder: area.sortOrder,
+        minStaff: area.minStaff,
         isCritical: area.isCritical ? 1 : 0,
         requiresHomeoffice: area.requiresHomeoffice ? 1 : 0,
         rotationMinPerWeek: area.rotationMinPerWeek ?? null,

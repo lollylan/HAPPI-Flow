@@ -1,3 +1,4 @@
+import { createWriteStream } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { BrowserWindow, Menu, app, dialog, shell, utilityProcess } from 'electron';
@@ -5,7 +6,20 @@ import type { UtilityProcess } from 'electron';
 import { errorPage, waitForServer } from './readiness.js';
 
 const PORT = Number(process.env.HAEPPI_PORT ?? 4173);
-const BASE_URL = `http://localhost:${PORT}`;
+
+/**
+ * Bewusst 127.0.0.1 statt localhost: auf manchen Windows-Rechnern loest
+ * `localhost` zuerst auf ::1 auf. Der Server lauscht auf IPv4 - das
+ * Fenster zeigte dann einen Verbindungsfehler, obwohl der Dienst laeuft.
+ */
+const BASE_URL = `http://127.0.0.1:${PORT}`;
+
+/**
+ * Electron leitet das Datenverzeichnis sonst aus dem Paketnamen ab und
+ * legt die Praxisdaten unter `%APPDATA%\@haeppi\desktop\` ab. Bewusst
+ * ohne Umlaut: der Pfad taucht in Sicherungen und Supportfragen auf.
+ */
+app.setName('HAEPPI-Flow');
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -20,9 +34,13 @@ let server: UtilityProcess | null = null;
  * laesst kein verwaistes Node-Fenster zurueck.
  */
 function startServer(): void {
-  const entry = app.isPackaged
-    ? path.join(process.resourcesPath, 'server', 'index.js')
-    : path.join(here, '..', '..', 'server', 'dist', 'index.js');
+  // Der Server liegt innerhalb der Anwendung, damit er seine
+  // Abhaengigkeiten ueber die normale Node-Aufloesung findet. Die
+  // Oberflaeche liegt als statische Dateien daneben in resources/client.
+  const entry = path.join(here, '..', 'server-dist', 'index.js');
+  const clientDir = app.isPackaged
+    ? path.join(process.resourcesPath, 'client')
+    : path.join(here, '..', 'resources', 'client');
 
   server = utilityProcess.fork(entry, [], {
     // Die Datenbank gehoert nach %APPDATA%, nicht neben die Anwendung.
@@ -30,14 +48,29 @@ function startServer(): void {
       ...process.env,
       NODE_ENV: 'production',
       HAEPPI_DATA_DIR: app.getPath('userData'),
+      HAEPPI_CLIENT_DIR: clientDir,
       HAEPPI_PORT: String(PORT),
     },
-    stdio: 'inherit',
+    // Eine Fensteranwendung hat keine Konsole. Ohne Protokoll bliebe ein
+    // Startproblem in der Praxis unauffindbar.
+    stdio: 'pipe',
   });
 
+  const log = createWriteStream(path.join(app.getPath('userData'), 'server.log'), { flags: 'a' });
+  log.write(`\n=== Start ${new Date().toISOString()} ===\n`);
+  log.write(`Einstiegspunkt: ${entry}\n`);
+  server.stdout?.pipe(log);
+  server.stderr?.pipe(log);
+
   server.on('exit', (code) => {
+    log.write(`Dienst beendet mit Code ${code}\n`);
     if (code !== 0 && mainWindow) {
-      void mainWindow.loadURL(errorPage(`Der Dienst wurde mit Code ${code} beendet.`));
+      void mainWindow.loadURL(
+        errorPage(
+          `Der Dienst wurde mit Code ${code} beendet. Einzelheiten stehen in ` +
+            `${path.join(app.getPath('userData'), 'server.log')}`,
+        ),
+      );
     }
   });
 }

@@ -4,19 +4,19 @@ copyright: Praxis
 
 directories:
   output: ../../release
-  buildResources: build
 
 files:
   - dist/**/*
+  - server-dist/**/*
   - package.json
 
-# Server, Oberflaeche und Laufzeit-Abhaengigkeiten. Bewusst NICHT die
-# Datenbank und keinen Schluessel: die Vorgaengerversion lieferte
-# happi-flow.db und secret.key im Installer mit, also echte
-# Mitarbeiterdaten an jeden, der die Datei bekam.
+# Nur die Oberflaeche als statische Dateien. Bewusst KEINE Datenbank und
+# kein Schluessel: die Vorgaengerversion lieferte happi-flow.db und
+# secret.key im Installer mit, also echte Mitarbeiterdaten an jeden, der
+# die Datei bekam.
 extraResources:
-  - from: resources
-    to: .
+  - from: resources/client
+    to: client
 
 win:
   target:
@@ -32,10 +32,11 @@ nsis:
   createStartMenuShortcut: true
   shortcutName: HÄPPI-Flow
 
-# Native Module (better-sqlite3, @node-rs/argon2) muessen entpackt
-# vorliegen - aus einem asar-Archiv laesst sich keine .node-Datei laden.
+# Native Module muessen entpackt vorliegen - aus einem asar-Archiv laesst
+# sich keine .node-Datei laden.
 asarUnpack:
   - '**/node_modules/better-sqlite3/**'
   - '**/node_modules/@node-rs/**'
+  - '**/node_modules/bindings/**'
 
 npmRebuild: true

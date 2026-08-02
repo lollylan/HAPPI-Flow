@@ -9,7 +9,17 @@ import globals from 'globals';
  */
 export default tseslint.config(
   {
-    ignores: ['**/dist/**', '**/node_modules/**', '**/release/**', '**/*.d.ts', 'coverage/**'],
+    ignores: [
+      '**/dist/**',
+      '**/node_modules/**',
+      '**/release/**',
+      '**/*.d.ts',
+      'coverage/**',
+      // Von apps/desktop/scripts/prepare-resources.mjs erzeugt: der
+      // gebaute Server und die gebaute Oberflaeche.
+      'apps/desktop/server-dist/**',
+      'apps/desktop/resources/**',
+    ],
   },
 
   js.configs.recommended,

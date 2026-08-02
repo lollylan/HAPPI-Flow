@@ -8,6 +8,7 @@ coverage
 *.local
 # Wird von apps/desktop/scripts/prepare-resources.mjs erzeugt.
 apps/desktop/resources
+apps/desktop/server-dist
 
 # Logs
 logs
