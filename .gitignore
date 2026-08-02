@@ -1,33 +1,31 @@
+# Abhaengigkeiten und Build-Ergebnisse
+node_modules
+dist
+dist-ssr
+release
+coverage
+*.tsbuildinfo
+*.local
+
 # Logs
 logs
 *.log
 npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-lerna-debug.log*
 
-node_modules
-dist
-dist-ssr
-*.local
-
-# Editor directories and files
+# Editor
 .vscode/*
 !.vscode/extensions.json
 .idea
 .DS_Store
 *.suo
-*.ntvs*
-*.njsproj
-*.sln
 *.sw?
 
-# Database
+# Praxisdaten - gehoeren NIE ins Repository.
+# Im Betrieb liegt die Datenbank unter %APPDATA%\HAEPPI-Flow\, nicht hier.
 *.db
+*.db-shm
+*.db-wal
 *.sqlite
 *.sqlite3
-
-# Security
 secret.key
-release/
+backups/

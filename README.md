@@ -1,65 +1,90 @@
-# HÄPPI-Flow
+# HÄPPI-Flow 2.0
 
-HÄPPI-Flow ist eine intelligente, browserbasierte Anwendung zur Erstellung und Verwaltung von Dienstplänen (Fokus auf medizinische Praxen). Die Anwendung läuft lokal in deinem Browser und unterstützt komplexe Einteilungs-Regeln, Skills, Zeit-Präferenzen und vieles mehr.
+Dienstplanung für eine hausärztliche Praxis. Läuft vollständig lokal: ein Praxis-PC
+betreibt die Anwendung, alle anderen Rechner im Praxisnetz greifen per Browser zu.
+Keine Cloud, keine Registrierung, keine Internetverbindung nötig.
 
-## 🌟 Funktionsübersicht
+> **Status:** Im Neuaufbau. Version 1 wurde verworfen — der letzte Stand liegt
+> unter dem Git-Tag `legacy-v1`, die Neuentwicklung auf Branch `rebuild/v2`.
 
-- **Intelligente, automatische Schichtplanung**: Ein Algorithmus verteilt Mitarbeiter automatisch auf Arbeitsbereiche basierend auf Skills, Abwesenheiten und Prioritäten. Praxisspezifische Logik bevorzugt kritische Bereiche und beachtet Minimum-Besetzungen.
-- **Rollen- & Skill-Management**: Definiere beliebige Skills (z.B. Blutentnahme, EKG, Abrechnung) und ordne sie Mitarbeitern und Arbeitsbereichen zu.
-- **Min/Max-Regeln & Präferenzen**: Mitarbeiter können Prioritäten haben (`Bevorzugt`, `Ungern`, etc.) oder harte Regeln besitzen (z.B. maximal 2 Mal Rezeption pro Woche).
-- **Flexible Zeit- und Slotsteuerung**: Komplett anpassbare Praxisöffnungszeiten und Schichtzeiten (Vormittag, Mittag, Nachmittag) pro Wochentag inklusive Minuten-genauen Start- und Endzeiten der Mitarbeiter. Komplette Schichten können an bestimmten Tagen deaktiviert (z.B. Mittwochnachmittag geschlossen) werden.
-- **Lokale / Offline Nutzung**: Alle Daten werden (derzeit) lokal in deinem Browser (`localStorage`) gespeichert. Es ist keine Registrierung oder Online-Verbindung erforderlich.
-- **Backups**: Du kannst jederzeit eine `.json`-Datei exportieren, um deine Konfiguration und Mitarbeiter zu sichern – oder für einen Umzug auf einen anderen PC / Browser wieder importieren.
+## Was die Anwendung leisten soll
 
-## 🚀 Installation & Start
+- **Zwei getrennte Dienstpläne** für Ärzte und MFA, die sich an einer Stelle
+  berühren: die Primary Care Managerin hält Sprechstunde wie eine Ärztin, belegt
+  dabei eines der vier Zimmer und ist solange aus dem MFA-Pool gesperrt.
+- **Automatische Zuteilung** mit garantierter Mindestbesetzung kritischer Bereiche
+  (Anmeldung, Labor vormittags) und Pflichtrotation, damit niemand das Labor verlernt.
+- **Nachvollziehbarkeit**: Für jeden unbesetzten Pflichtplatz nennt die Anwendung
+  den Grund — nicht nur „konnte nicht geplant werden".
+- **Selbstverwaltung**: Mitarbeiter beantragen Urlaub und tragen Krankmeldungen
+  selbst ein. Kolleginnen sehen nur „abwesend", den Grund sieht ausschließlich die
+  Praxisleitung.
 
-Die App basiert auf React und Vite. Um sie lokal zum Laufen zu bringen, benötigst du [Node.js](https://nodejs.org/) auf deinem Computer.
+## Entwicklung
 
-1. **Repository klonen**
-   ```bash
-   git clone https://github.com/lollylan/HAPPI-Flow.git
-   cd HAPPI-Flow
-   ```
+```bash
+npm install
+```
 
-2. **Abhängigkeiten installieren**
-   ```bash
-   npm install
-   ```
+```bash
+npm run dev
+```
 
-3. **Entwicklungsserver starten**
-   ```bash
-   npm run dev
-   ```
+Startet Shared-Watcher, API-Server (Port 4173) und Vite-Dev-Server (Port 5173) parallel.
 
-4. **App öffnen**
-   Öffne deinen Browser und gehe zu der Adresse, die im Terminal angezeigt wird (meist `http://localhost:5173/` oder `http://localhost:5174/`).
+```bash
+npm test
+```
 
-## 🔑 Anmeldung
+```bash
+npm run check
+```
 
-Beim ersten Start meldest du dich mit den Standard-Zugangsdaten an:
+`check` prüft Typen, Lint und Formatierung — das muss vor jedem Commit grün sein.
 
-| Feld         | Wert    |
-| ------------ | ------- |
-| Benutzername | `admin` |
-| Passwort     | `admin` |
+## Projektstruktur
 
-> ⚠️ **Wichtig:** Ändere das Standard-Passwort unbedingt direkt nach der ersten Anmeldung (unter **"Einstellungen"**). Die Zugangsdaten `admin` / `admin` sind öffentlich bekannt und bieten keinerlei Schutz, solange sie nicht geändert wurden.
+| Pfad              | Inhalt                                                                                                         |
+| ----------------- | -------------------------------------------------------------------------------------------------------------- |
+| `packages/shared` | Domänentypen, Zeit-/Stundenrechnung, Dienstplan-Algorithmus. Ohne Datenbankzugriff, damit vollständig testbar. |
+| `apps/server`     | Express + SQLite. Hält die Daten, setzt Authentifizierung und Datenschutz durch.                               |
+| `apps/client`     | React-Oberfläche: Dashboard, Dienstpläne, Einsatz-Matrix, Abwesenheiten, Druckansichten.                       |
+| `apps/desktop`    | Electron-Hülle (kommt in Etappe 7).                                                                            |
 
-## 📖 Kurzanleitung
+## Verbindliche Konventionen
 
-1. **Einstellungen anpassen**: Gehe zuerst in den Reiter **"Einstellungen"**. Dort kannst du die Start- und Endzeiten für die Blöcke "Vormittag", "Mittag" und "Nachmittag" für jeden Wochentag festlegen. Wenn an manchen Tagen nachmittags geschlossen ist, nehme für diesen Slot dort das Häkchen bei "Aktiv" heraus. Bestätige mit "Zeiten speichern".
-2. **Skills & Räume**: Lege eventuell zusätzliche Qualifikationen (Skills) an. Passe die Arbeitsbereiche an, lege fest, ob ein Bereich "kritisch" ist (wird zuerst aufgefüllt) und wie viele Mitarbeiter dort zwingend gebraucht werden.
-3. **Mitarbeiter anlegen**: Lege deine Mitarbeiter an, ordne ihnen Skills zu und klappe das kleine Menü aus, um Urlaubsstände, Arbeitszeiten (ganz genau für jeden Tag) und besondere Wünsche / Regeln festzulegen.
-4. **Dienstplan füllen**: Wechsel auf "Dienstplan", wähle eine Woche aus, drücke auf **"Automatisch befüllen"** und die Software übernimmt die Puzzlespiel-Arbeit. Danach kannst du jederzeit in Schichten klicken und dort Personen händisch auswechseln oder fest verankern (Schloss-Symbol), falls der Algorithmus sie beim nächsten Knopfdruck nicht mehr verschieben soll.
+Diese drei Regeln fangen die Fehlerklassen ab, an denen Version 1 gescheitert ist.
+Zwei davon sind als ESLint-Regeln scharf gestellt und brechen den Build.
 
-## 🛠 Tech-Stack
+**Uhrzeiten sind Integer-Minuten seit Mitternacht.** Nie Textvergleiche auf `"HH:MM"`.
+In v1 wurde die Verfügbarkeit als `avail.start > slot.start` geprüft — dadurch war
+eine Kraft mit Arbeitsbeginn 09:00 für den Block 08:00–13:00 gar nicht einplanbar,
+statt zu 80 % anwesend. Für Zeitvergleiche gibt es `overlapMinutes()` und
+`coverageRatio()` in `shared/time/minutes.ts`.
 
-- React 18
-- TypeScript
-- Tailwind CSS
-- Lucide Icons
-- Vite
+**Datumsangaben entstehen ausschließlich über `toLocalISODate()`.**
+`toISOString().split('T')[0]` liefert in unserer Zeitzone den Vortag und ist per
+Lint-Regel verboten. Datumsarithmetik läuft über `shared/time/dates.ts`, das intern
+auf 12:00 Ortszeit verankert und damit gegen die Zeitumstellung immun ist.
 
-## 📄 Lizenz
+**Der Scheduler ist deterministisch.** In `packages/shared/src/scheduler/` sind
+`Math.random()`, `Date.now()` und `new Date()` per Lint-Regel gesperrt. Gleicher
+Input muss denselben Plan ergeben, sonst ist er weder testbar noch erklärbar.
 
-Dieses Projekt ist privat / MIT-lizenziert (je nachdem).
+## Sicherheit und Daten
+
+- Passwörter werden serverseitig mit **argon2id** gehasht. Der Browser bekommt
+  niemals einen Hash zu sehen.
+- Die Datenschutz-Filterung für Abwesenheitsgründe greift **serverseitig** — die
+  API liefert Kolleginnen das Feld gar nicht erst aus, statt es nur auszublenden.
+- Im Betrieb liegt die Datenbank unter `%APPDATA%\HAEPPI-Flow\`, **nie** im
+  Projektverzeichnis und **nie** im Installer.
+- Der Schutz der Daten auf dem Praxis-PC ist Sache von Windows-Anmeldung, NTFS-Rechten
+  und BitLocker. Eine anwendungseigene Verschlüsselung mit einem Schlüssel, der neben
+  der Datenbank liegt, wäre wirkungslos — genau das tat v1.
+
+## Abhängigkeiten mit Einschränkung
+
+TypeScript ist bewusst auf **5.9** festgehalten. `typescript-eslint` unterstützt
+derzeit nur `>=4.8.4 <6.1.0`; ein Sprung auf TypeScript 7 würde das Linting
+abschalten. Erst anheben, wenn `typescript-eslint` nachgezogen hat.

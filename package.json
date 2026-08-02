@@ -1,73 +1,42 @@
 {
-  "name": "h-ppi-flow",
+  "name": "haeppi-flow",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Dienstplanung fuer die Hausarztpraxis - lokal, offline, mehrbenutzerfaehig",
   "type": "module",
-  "main": "electron-main.js",
-  "bin": "server.cjs",
+  "engines": {
+    "node": ">=20.11"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
   "scripts": {
-    "dev": "concurrently \"npm run server\" \"vite\"",
-    "server": "node server.js",
-    "build": "tsc && vite build",
-    "preview": "vite preview",
-    "electron": "electron .",
-    "package": "electron-builder --win"
-  },
-  "build": {
-    "appId": "com.happi.flow",
-    "productName": "H Flow",
-    "win": {
-      "target": "nsis"
-    },
-    "directories": {
-      "output": "release"
-    },
-    "files": [
-      "dist/**/*",
-      "server.js",
-      "electron-main.js",
-      "package.json"
-    ],
-    "extraResources": [
-      "secret.key",
-      "happi-flow.db"
-    ]
-  },
-  "pkg": {
-    "scripts": "server.cjs",
-    "assets": "dist/**/*",
-    "targets": [
-      "node18-win-x64"
-    ]
+    "dev": "concurrently -k -n shared,server,client -c gray,blue,green \"npm:dev:shared\" \"npm:dev:server\" \"npm:dev:client\"",
+    "dev:shared": "tsc -b packages/shared --watch --preserveWatchOutput",
+    "dev:server": "npm run dev --workspace @haeppi/server",
+    "dev:client": "npm run dev --workspace @haeppi/client",
+    "build": "tsc -b && npm run build --workspace @haeppi/client",
+    "check": "npm run typecheck && npm run lint && npm run format:check",
+    "typecheck": "tsc -b && tsc --noEmit -p apps/client/tsconfig.json",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "cross-env TZ=Europe/Berlin vitest run",
+    "test:watch": "cross-env TZ=Europe/Berlin vitest",
+    "clean": "tsc -b --clean"
   },
   "devDependencies": {
-    "@tailwindcss/vite": "^4.2.0",
-    "@types/better-sqlite3": "^7.6.13",
-    "@types/cors": "^2.8.19",
-    "@types/express": "^5.0.6",
-    "@vitejs/plugin-react": "^5.1.4",
-    "concurrently": "^9.2.1",
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^24.13.3",
+    "concurrently": "^10.0.4",
     "cross-env": "^10.1.0",
-    "electron": "^40.6.0",
-    "electron-builder": "^26.8.1",
-    "nodemon": "^3.1.13",
-    "npm-run-all": "^4.1.5",
-    "tailwindcss": "^4.2.0",
-    "ts-node": "^10.9.2",
-    "tsx": "^4.21.0",
+    "eslint": "^10.8.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.9.0",
+    "prettier": "^3.9.6",
     "typescript": "~5.9.3",
-    "vite": "^7.3.1"
-  },
-  "dependencies": {
-    "@types/react": "^19.2.14",
-    "@types/react-dom": "^19.2.3",
-    "better-sqlite3": "^12.6.2",
-    "cors": "^2.8.6",
-    "dotenv": "^17.3.1",
-    "express": "^5.2.1",
-    "html-to-image": "^1.11.13",
-    "jspdf": "^4.2.0",
-    "lucide-react": "^0.574.0",
-    "react": "^19.2.4",
-    "react-dom": "^19.2.4",
-    "uuid": "^13.0.0"
+    "typescript-eslint": "^8.65.0",
+    "vitest": "^4.1.10"
   }
 }
