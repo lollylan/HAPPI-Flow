@@ -58,6 +58,9 @@ export const workAreaInputSchema = z
     isActive: z.boolean(),
     requiredSkillIds: z.array(z.string()),
     blockIds: z.array(z.string()),
+    // Abweichende Mindestbesetzung je Block, z. B. Anmeldung 2 in der
+    // Sprechstunde und 1 im Innendienst.
+    blockMinStaff: z.record(z.string(), z.number().int().min(0).max(20)).default({}),
   })
   .refine((area) => area.maxStaff === null || area.maxStaff >= area.minStaff, {
     message: 'Die Obergrenze darf nicht unter der Mindestbesetzung liegen.',

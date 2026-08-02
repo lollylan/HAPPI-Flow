@@ -23,6 +23,7 @@ function toWorkArea(
   row: WorkAreaRow,
   requiredSkillIds: readonly Id[],
   blockIds: readonly Id[],
+  blockMinStaff: Readonly<Record<Id, number>> = {},
 ): WorkArea {
   return {
     id: row.id,
@@ -41,6 +42,7 @@ function toWorkArea(
     isActive: row.is_active === 1,
     requiredSkillIds,
     blockIds,
+    blockMinStaff,
   };
 }
 
@@ -68,13 +70,29 @@ export function listWorkAreas(db: Db, includeInactive = false): WorkArea[] {
       value: string;
     }[],
   );
-  const blocks = groupBy(
-    db
-      .prepare(`SELECT work_area_id AS area, day_block_id AS value FROM work_area_blocks`)
-      .all() as { area: string; value: string }[],
-  );
+  const blockRows = db
+    .prepare(`SELECT work_area_id, day_block_id, min_staff FROM work_area_blocks`)
+    .all() as { work_area_id: string; day_block_id: string; min_staff: number | null }[];
 
-  return rows.map((row) => toWorkArea(row, skills.get(row.id) ?? [], blocks.get(row.id) ?? []));
+  const blocks = groupBy(
+    blockRows.map((row) => ({ area: row.work_area_id, value: row.day_block_id })),
+  );
+  const overrides = new Map<string, Record<string, number>>();
+  for (const row of blockRows) {
+    if (row.min_staff === null) continue;
+    const current = overrides.get(row.work_area_id) ?? {};
+    current[row.day_block_id] = row.min_staff;
+    overrides.set(row.work_area_id, current);
+  }
+
+  return rows.map((row) =>
+    toWorkArea(
+      row,
+      skills.get(row.id) ?? [],
+      blocks.get(row.id) ?? [],
+      overrides.get(row.id) ?? {},
+    ),
+  );
 }
 
 export function getWorkArea(db: Db, id: Id): WorkArea | null {
@@ -86,13 +104,19 @@ export function getWorkArea(db: Db, id: Id): WorkArea | null {
     .prepare(`SELECT skill_id FROM work_area_skills WHERE work_area_id = ?`)
     .all(id) as { skill_id: string }[];
   const blocks = db
-    .prepare(`SELECT day_block_id FROM work_area_blocks WHERE work_area_id = ?`)
-    .all(id) as { day_block_id: string }[];
+    .prepare(`SELECT day_block_id, min_staff FROM work_area_blocks WHERE work_area_id = ?`)
+    .all(id) as { day_block_id: string; min_staff: number | null }[];
+
+  const overrides: Record<string, number> = {};
+  for (const entry of blocks) {
+    if (entry.min_staff !== null) overrides[entry.day_block_id] = entry.min_staff;
+  }
 
   return toWorkArea(
     row,
     skills.map((entry) => entry.skill_id),
     blocks.map((entry) => entry.day_block_id),
+    overrides,
   );
 }
 
@@ -107,9 +131,12 @@ function replaceRelations(db: Db, id: Id, input: WorkAreaInput): void {
 
   db.prepare(`DELETE FROM work_area_blocks WHERE work_area_id = ?`).run(id);
   const insertBlock = db.prepare(
-    `INSERT OR IGNORE INTO work_area_blocks (work_area_id, day_block_id) VALUES (?, ?)`,
+    `INSERT OR IGNORE INTO work_area_blocks (work_area_id, day_block_id, min_staff)
+     VALUES (?, ?, ?)`,
   );
-  for (const blockId of new Set(input.blockIds)) insertBlock.run(id, blockId);
+  for (const blockId of new Set(input.blockIds)) {
+    insertBlock.run(id, blockId, input.blockMinStaff[blockId] ?? null);
+  }
 }
 
 export function createWorkArea(db: Db, input: WorkAreaInput): WorkArea {

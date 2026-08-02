@@ -16,3 +16,5 @@ export * from './time/closedDays.js';
 
 export * from './hours/vacation.js';
 export * from './hours/balance.js';
+
+export * from './scheduler/index.js';

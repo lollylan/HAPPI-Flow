@@ -51,6 +51,12 @@ export interface WorkArea {
   readonly requiredSkillIds: readonly Id[];
   /** In welchen Tagesbloecken der Bereich betrieben wird. */
   readonly blockIds: readonly Id[];
+  /**
+   * Abweichende Mindestbesetzung je Block; fehlt der Eintrag, gilt `minStaff`.
+   * Beispiel: die Anmeldung braucht in der Sprechstunde zwei Personen,
+   * im Innendienst genuegt eine am Telefon.
+   */
+  readonly blockMinStaff: Readonly<Record<Id, number>>;
 }
 
 export interface Skill {

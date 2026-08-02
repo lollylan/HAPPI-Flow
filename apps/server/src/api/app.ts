@@ -13,6 +13,7 @@ import {
   skillsRouter,
   workAreasRouter,
 } from './routes/stammdaten.js';
+import { rosterRouter, templateRouter } from './routes/roster.js';
 
 /**
  * Baut die Express-App ohne sie zu starten.
@@ -66,6 +67,8 @@ export function createApp(db: Db): Express {
   app.use('/api/day-blocks', dayBlocksRouter());
   app.use('/api/matrix', matrixRouter());
   app.use('/api/settings', settingsRouter());
+  app.use('/api/roster', rosterRouter());
+  app.use('/api/templates', templateRouter());
 
   app.use('/api', (_req, res) => {
     res.status(404).json({ error: 'Unbekannter Endpunkt.' });

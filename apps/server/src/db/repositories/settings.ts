@@ -1,5 +1,5 @@
-import type { HolidaySettings } from '@haeppi/shared';
-import { DEFAULT_HOLIDAY_SETTINGS } from '@haeppi/shared';
+import type { HolidaySettings, SchedulerWeights } from '@haeppi/shared';
+import { DEFAULT_HOLIDAY_SETTINGS, DEFAULT_WEIGHTS } from '@haeppi/shared';
 import type { Db } from '../index.js';
 
 /**
@@ -42,6 +42,7 @@ export interface PracticeSettings {
   readonly holidays: HolidaySettings;
   readonly minOverlapRatio: number;
   readonly fairnessWeeks: number;
+  readonly weights: SchedulerWeights;
 }
 
 export function readPracticeSettings(db: Db): PracticeSettings {
@@ -50,5 +51,11 @@ export function readPracticeSettings(db: Db): PracticeSettings {
     holidays: readSetting(db, SETTING_KEYS.holidays, DEFAULT_HOLIDAY_SETTINGS),
     minOverlapRatio: readSetting(db, SETTING_KEYS.minOverlapRatio, 0.5),
     fairnessWeeks: readSetting(db, SETTING_KEYS.fairnessWeeks, 6),
+    // Gespeicherte Werte ueber die Standardgewichte legen: kommt spaeter ein
+    // neues Gewicht dazu, laufen bestehende Praxen ohne Migration weiter.
+    weights: {
+      ...DEFAULT_WEIGHTS,
+      ...readSetting<Partial<SchedulerWeights>>(db, SETTING_KEYS.schedulerWeights, {}),
+    },
   };
 }
