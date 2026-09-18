@@ -62,4 +62,4 @@ Beim ersten Start meldest du dich mit den Standard-Zugangsdaten an:
 
 ## 📄 Lizenz
 
-Dieses Projekt ist privat / MIT-lizenziert (je nachdem).
+Dieses Projekt ist MIT-lizenziert.
