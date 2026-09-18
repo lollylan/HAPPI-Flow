@@ -204,3 +204,7 @@ Version 1 wurde vollständig verworfen. Der letzte Stand liegt unter dem Git-Tag
 JSON-Blob in einer SQLite-Zeile), keine serverseitige Anmeldung (jedes Gerät im
 Praxisnetz konnte alle Mitarbeiterdaten inklusive Passwort-Hashes abrufen) und ein
 Systemfehler im Planungsalgorithmus.
+
+## Lizenz
+
+Dieses Projekt ist MIT-lizenziert.
