@@ -196,6 +196,26 @@ describe('Zugang wiederherstellen', () => {
     expect((await handleRecoveryMarker(db, dataDir)).performed).toBe(false);
   });
 
+  it('erkennt die Marker-Datei auch mit doppelter Endung oder anderer Schreibweise', async () => {
+    // Der Explorer blendet Endungen aus - "ZUGANG-ZURUECKSETZEN.txt" wird
+    // beim Anlegen schnell zu "ZUGANG-ZURUECKSETZEN.txt.txt".
+    await createUser(db, 'chefin', 'altes-langes-passwort', 'admin');
+    writeFileSync(path.join(dataDir, 'zugang-zuruecksetzen.txt.txt'), '');
+
+    const result = await handleRecoveryMarker(db, dataDir);
+    expect(result.performed).toBe(true);
+    expect(result.username).toBe('chefin');
+    // Und die Datei ist trotzdem weg.
+    expect((await handleRecoveryMarker(db, dataDir)).performed).toBe(false);
+  });
+
+  it('lässt sich auch ohne Datei erzwingen - für start-server.bat reset', async () => {
+    await createUser(db, 'chefin', 'altes-langes-passwort', 'admin');
+    const result = await handleRecoveryMarker(db, dataDir, true);
+    expect(result.performed).toBe(true);
+    expect(result.password?.length).toBe(16);
+  });
+
   it('hinterlässt einen Protokolleintrag', async () => {
     await createUser(db, 'chefin', 'altes-langes-passwort', 'admin');
     writeFileSync(path.join(dataDir, RECOVERY_MARKER), '');

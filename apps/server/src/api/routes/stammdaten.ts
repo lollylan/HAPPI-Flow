@@ -1,4 +1,4 @@
-﻿import { Router } from 'express';
+import { Router } from 'express';
 import { requireAdmin, requireAuth } from '../../auth/middleware.js';
 import {
   createEmployee,
@@ -47,10 +47,12 @@ import {
   pathParam,
 } from '../http.js';
 import {
+  PLAN_KIND,
   dayBlocksInputSchema,
   employeeInputSchema,
   holidaySettingsSchema,
   matrixInputSchema,
+  planningSettingsSchema,
   skillInputSchema,
   workAreaInputSchema,
 } from '../schemas.js';
@@ -198,14 +200,16 @@ export function dayBlocksRouter(): Router {
     res.json({ dayBlocks: listDayBlocks(req.db) });
   });
 
-  /** Das ganze Wochenmodell wird auf einmal ersetzt, nicht Block fuer Block. */
-  router.put('/', requireAdmin, (req, res) => {
+  /** Das Wochenmodell einer Gruppe wird auf einmal ersetzt, nicht Block fuer Block. */
+  router.put('/:plan', requireAdmin, (req, res) => {
+    const plan = PLAN_KIND.parse(pathParam(req, 'plan'));
     const { blocks } = parseBody(dayBlocksInputSchema, req.body);
+    const own = blocks.map((block) => ({ ...block, plan }));
 
-    const conflict = findBlockConflict(blocks);
+    const conflict = findBlockConflict(own);
     if (conflict) throw badRequest(conflict);
 
-    const losing = usageOfRemovedBlocks(req.db, blocks);
+    const losing = usageOfRemovedBlocks(req.db, plan, own);
     if (losing.length > 0 && req.query.force !== '1') {
       const details = losing
         .map((entry) => `"${entry.label}" (${entry.assignments} Zuweisungen)`)
@@ -216,8 +220,8 @@ export function dayBlocksRouter(): Router {
       );
     }
 
-    const dayBlocks = replaceDayBlocks(req.db, blocks);
-    writeAudit(req.db, req.user!.userId, 'update', 'dayBlocks', null, `${blocks.length} Blöcke`);
+    const dayBlocks = replaceDayBlocks(req.db, plan, own);
+    writeAudit(req.db, req.user!.userId, 'update', 'dayBlocks', plan, `${own.length} Blöcke`);
     res.json({ dayBlocks });
   });
 
@@ -245,6 +249,16 @@ export function settingsRouter(): Router {
     const holidays = parseBody(holidaySettingsSchema, req.body);
     writeSetting(req.db, SETTING_KEYS.holidays, holidays);
     writeAudit(req.db, req.user!.userId, 'update', 'settings', 'holidays', holidays.state);
+    res.json({ settings: readPracticeSettings(req.db) });
+  });
+
+  /** Gewichte und Planungsparameter - bewusst in der Datenbank, nicht im Code. */
+  router.put('/planning', requireAdmin, (req, res) => {
+    const input = parseBody(planningSettingsSchema, req.body);
+    writeSetting(req.db, SETTING_KEYS.schedulerWeights, input.weights);
+    writeSetting(req.db, SETTING_KEYS.minOverlapRatio, input.minOverlapRatio);
+    writeSetting(req.db, SETTING_KEYS.fairnessWeeks, input.fairnessWeeks);
+    writeAudit(req.db, req.user!.userId, 'update', 'settings', 'planning');
     res.json({ settings: readPracticeSettings(req.db) });
   });
 

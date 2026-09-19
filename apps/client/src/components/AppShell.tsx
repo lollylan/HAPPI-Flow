@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import {
   CalendarDays,
+  CalendarRange,
   Clock,
   Grid3x3,
   LayoutDashboard,
@@ -14,7 +15,7 @@ import {
   Users,
 } from 'lucide-react';
 import type { SessionUser } from '@haeppi/shared';
-import { useLogout } from '../api/queries';
+import { useLogout, useProposals } from '../api/queries';
 
 interface NavEntry {
   to: string;
@@ -34,6 +35,7 @@ const NAV: readonly { section: string; entries: readonly NavEntry[] }[] = [
     section: 'Planung',
     entries: [
       { to: '/dienstplan', label: 'Dienstplan', icon: CalendarDays },
+      { to: '/musterwoche', label: 'Musterwoche', icon: CalendarRange, adminOnly: true },
       { to: '/abwesenheiten', label: 'Abwesenheiten', icon: Palmtree },
     ],
   },
@@ -72,6 +74,8 @@ function useTheme() {
 export function AppShell({ user }: { user: SessionUser }) {
   const logout = useLogout();
   const { dark, toggle } = useTheme();
+  const { data: proposals } = useProposals(user.role === 'admin');
+  const openProposals = proposals?.openCount ?? 0;
 
   return (
     <div className="flex min-h-full">
@@ -117,6 +121,14 @@ export function AppShell({ user }: { user: SessionUser }) {
                     >
                       <entry.icon className="size-4" />
                       {entry.label}
+                      {entry.to === '/dienstplan' && openProposals > 0 && (
+                        <span
+                          className="ml-auto rounded-full bg-amber-500 px-1.5 text-[11px] font-semibold text-white"
+                          title="Offene Umplanungsvorschläge"
+                        >
+                          {openProposals}
+                        </span>
+                      )}
                     </NavLink>
                   ),
                 )}

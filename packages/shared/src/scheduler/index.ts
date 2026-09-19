@@ -1,23 +1,19 @@
 import type { Id, IsoDate } from '../types/common.js';
 import type { DayBlock } from '../types/dayBlock.js';
 import type { MatrixEntry } from '../types/matrix.js';
-import type { WorkArea } from '../types/workArea.js';
+import type { WorkArea, PlanKind } from '../types/workArea.js';
 import { effectiveMinPerWeek } from '../types/matrix.js';
-import { fullName } from '../types/employee.js';
+import { fullName, planForStaffType } from '../types/employee.js';
+import type { PlanChange } from '../types/assignment.js';
 import { formatHHMM } from '../time/minutes.js';
 import { WEEKDAY_LABELS } from '../types/common.js';
-import { isoWeekday, practiceWeekDates } from '../time/dates.js';
+import { addDays, isWeekend, isoWeekday, practiceWeekDates } from '../time/dates.js';
 import { FORBIDDEN, solveAssignment } from './hungarian.js';
-import {
-  areaKey,
-  blockKey,
-  checkEligibility,
-  hasRequestedAbsence,
-  needsSupervision,
-} from './constraints.js';
-import type { SeatSlot } from './constraints.js';
+import { areaKey, checkEligibility, hasRequestedAbsence, needsSupervision } from './constraints.js';
+import type { OccupiedSpan, SeatSlot } from './constraints.js';
 import type {
   Diagnostic,
+  FixedAssignment,
   PlanEmployee,
   PlanInput,
   PlanResult,
@@ -35,6 +31,8 @@ export function minStaffFor(area: WorkArea, blockId: Id): number {
   return area.blockMinStaff[blockId] ?? area.minStaff;
 }
 
+const PLAN_ORDER: Readonly<Record<PlanKind, number>> = { doctor: 0, pcm: 1, mfa: 2 };
+
 interface Seat {
   readonly area: WorkArea;
   readonly required: boolean;
@@ -43,21 +41,26 @@ interface Seat {
 interface State {
   readonly assignments: PlannedAssignment[];
   readonly diagnostics: Diagnostic[];
-  /** employeeId -> belegte "date|blockId". */
-  readonly occupied: Map<Id, Set<string>>;
+  /** employeeId -> belegte Zeitfenster. */
+  readonly occupied: Map<Id, OccupiedSpan[]>;
   /** "employeeId|areaId" -> Einsätze in dieser Woche. */
   readonly weekCounts: Map<string, number>;
   /** "date|blockId|areaId" -> eingeteilte Personen. */
   readonly placed: Map<string, Id[]>;
   /** employeeId -> bereits verplante Minuten dieser Woche. */
   readonly minutes: Map<Id, number>;
+  /** "employeeId|date" -> Bereiche, in denen die Person an dem Tag war. */
+  readonly areasByDay: Map<string, Set<Id>>;
   score: number;
 }
 
 const slotKey = (date: IsoDate, blockId: Id, areaId: Id): string => `${date}|${blockId}|${areaId}`;
+const fixedKey = (entry: FixedAssignment): string =>
+  `${entry.date}|${entry.dayBlockId}|${entry.workAreaId}|${entry.employeeId}`;
+const dayKey = (employeeId: Id, date: IsoDate): string => `${employeeId}|${date}`;
 
 /**
- * Erzeugt den Wochenplan.
+ * Erzeugt den Wochenplan fuer alle Gruppen auf einmal.
  *
  * Rein und deterministisch: kein Datenbankzugriff, keine Systemzeit, kein
  * Zufall. Gleicher Input ergibt denselben Plan - sonst waere er weder
@@ -71,70 +74,326 @@ export function generateWeekPlan(input: PlanInput): PlanResult {
     weekCounts: new Map(),
     placed: new Map(),
     minutes: new Map(),
+    areasByDay: new Map(),
     score: 0,
   };
 
   const matrix = new Map<string, MatrixEntry>();
   for (const entry of input.matrix) matrix.set(areaKey(entry.employeeId, entry.workAreaId), entry);
 
-  const pcmBusy = new Set(input.pcmBusy.map((entry) => blockKey(entry.date, entry.dayBlockId)));
-
-  // Nur Personen des passenden Plans, in stabiler Reihenfolge. Der
-  // Sortierschluessel entscheidet bei Kostengleichstand - nie ein Zufallswert.
+  // Stabile Reihenfolge: der Sortierschluessel entscheidet bei
+  // Kostengleichstand - nie ein Zufallswert.
   const employees = [...input.employees].sort(
     (a, b) => a.sortOrder - b.sortOrder || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
   );
+  const employeeById = new Map(employees.map((employee) => [employee.id, employee]));
 
   const areas = input.workAreas
-    .filter((area) => area.plan === input.plan && area.isActive)
-    .sort((a, b) => a.sortOrder - b.sortOrder || (a.id < b.id ? -1 : 1));
+    .filter((area) => area.isActive)
+    .sort(
+      (a, b) =>
+        PLAN_ORDER[a.plan] - PLAN_ORDER[b.plan] ||
+        a.sortOrder - b.sortOrder ||
+        (a.id < b.id ? -1 : 1),
+    );
+  const areaById = new Map(areas.map((area) => [area.id, area]));
+  const blockById = new Map(input.dayBlocks.map((block) => [block.id, block]));
 
   const fairnessAverage = averageHistory(input);
   const days = practiceWeekDates(input.weekStart).filter((date) => !input.closedDates.has(date));
+  const previousSet = new Set(input.previous.map(fixedKey));
 
-  const context = () => ({
-    matrix,
-    absences: input.absences,
-    pcmBusy,
-    minOverlapRatio: input.minOverlapRatio,
-  });
+  // Vorwoche fuer Folgeaufgaben ueber den Montag hinweg.
+  for (const entry of input.recent) {
+    const key = dayKey(entry.employeeId, entry.date);
+    const set = state.areasByDay.get(key) ?? new Set<Id>();
+    set.add(entry.workAreaId);
+    state.areasByDay.set(key, set);
+  }
 
   const eligibilityFor = (employee: PlanEmployee, slot: SeatSlot): RejectionCode | null =>
     checkEligibility(employee, slot, {
-      ...context(),
-      occupiedBlocks: state.occupied.get(employee.id) ?? new Set(),
+      occupied: state.occupied.get(employee.id) ?? [],
       weekCounts: state.weekCounts,
+      matrix,
+      absences: input.absences,
+      minOverlapRatio: input.minOverlapRatio,
     });
 
+  const ctx: PlanContext = {
+    input,
+    employees,
+    employeeById,
+    areas,
+    areaById,
+    blockById,
+    matrix,
+    eligibilityFor,
+    fairnessAverage,
+    previousSet,
+    days,
+  };
+
   // ---------------------------------------------------------- Phase A --
-  // Fixpunkte: gesperrte Zuweisungen, dann die Musterwoche.
+  // Fixpunkte: gesperrte Zuweisungen, dann die bisherige Woche (bei
+  // Umplanung), dann die Musterwoche (bei Neuplanung).
 
   for (const pin of input.pinned) {
-    const block = input.dayBlocks.find((entry) => entry.id === pin.dayBlockId);
-    const area = areas.find((entry) => entry.id === pin.workAreaId);
-    if (!block || !area) continue;
-    place(
-      state,
-      {
-        date: pin.date,
-        dayBlockId: pin.dayBlockId,
-        workAreaId: pin.workAreaId,
-        employeeId: pin.employeeId,
-        source: 'manual',
-        reason: 'gesperrt',
-      },
-      block,
+    const block = blockById.get(pin.dayBlockId);
+    const area = areaById.get(pin.workAreaId);
+    if (!block || !area || !days.includes(pin.date)) continue;
+    place(state, { ...pin, source: 'manual', reason: 'gesperrt' }, block);
+  }
+
+  if (input.mode === 'replan') {
+    keepPrevious(state, ctx);
+  } else {
+    applyTemplate(state, ctx);
+  }
+
+  // ---------------------------------------------------------- Phase B --
+  // Luecken blockweise fuellen, exakt statt gierig.
+
+  const blocks = plannableBlocks(input, days);
+  for (const group of groupByStart(blocks)) {
+    // Erst die Pflichtplaetze aller Gruppen, die zur selben Zeit beginnen,
+    // dann die Kuer. Sonst nimmt die PCM-Sprechstunde (freiwillig) die
+    // PCM, bevor die MFA-Anmeldung (Pflicht) sie mit Freigabe bekommen kann.
+    for (const pass of PASSES) {
+      for (const { date, block } of group) fillBlockPass(state, ctx, date, block, pass);
+    }
+  }
+
+  // ---------------------------------------------------------- Phase B2 --
+  // Umplanung: bleibt ein Pflichtplatz offen, obwohl die Personen des
+  // Blocks anders verteilt gehen wuerden, wird der Block neu geloest -
+  // mit Praemie fuer alles, was bleiben kann.
+  if (input.mode === 'replan') {
+    for (const { date, block } of blocks) repairBlock(state, ctx, date, block);
+  }
+
+  // ---------------------------------------------------------- Phase C --
+  // Betreuungspruefung, offene Pflichten melden, Unterschied ausweisen.
+
+  enforceSupervision(state, ctx);
+  reportUnfilledSeats(state, ctx, blocks);
+  reportUnmetRotation(state, ctx);
+
+  return {
+    assignments: state.assignments,
+    diagnostics: state.diagnostics,
+    changes: diffAgainstPrevious(state, input),
+    score: state.score,
+  };
+}
+
+// ------------------------------------------------------------- Kontext --
+
+interface PlanContext {
+  readonly input: PlanInput;
+  readonly employees: readonly PlanEmployee[];
+  readonly employeeById: ReadonlyMap<Id, PlanEmployee>;
+  readonly areas: readonly WorkArea[];
+  readonly areaById: ReadonlyMap<Id, WorkArea>;
+  readonly blockById: ReadonlyMap<Id, DayBlock>;
+  readonly matrix: ReadonlyMap<string, MatrixEntry>;
+  readonly eligibilityFor: (employee: PlanEmployee, slot: SeatSlot) => RejectionCode | null;
+  readonly fairnessAverage: ReadonlyMap<Id, number>;
+  readonly previousSet: ReadonlySet<string>;
+  readonly days: readonly IsoDate[];
+}
+
+interface DatedBlock {
+  readonly date: IsoDate;
+  readonly block: DayBlock;
+}
+
+/** Bloecke mit gleichem Tag und gleicher Startzeit, in Eingabereihenfolge. */
+function groupByStart(blocks: readonly DatedBlock[]): DatedBlock[][] {
+  const groups: DatedBlock[][] = [];
+  for (const entry of blocks) {
+    const last = groups[groups.length - 1];
+    const previous = last?.[0];
+    if (
+      previous &&
+      previous.date === entry.date &&
+      previous.block.startMin === entry.block.startMin
+    ) {
+      last.push(entry);
+    } else {
+      groups.push([entry]);
+    }
+  }
+  return groups;
+}
+
+/** Alle planbaren (Tag, Block)-Paare der Woche in fester Reihenfolge. */
+function plannableBlocks(input: PlanInput, days: readonly IsoDate[]): DatedBlock[] {
+  const result: DatedBlock[] = [];
+  for (const date of days) {
+    const weekday = isoWeekday(date);
+    const blocks = input.dayBlocks
+      .filter((block) => block.weekday === weekday && block.kind !== 'closed')
+      // Zeitlich, dann Aerzte vor PCM vor MFA: so bekommt die PCM zuerst
+      // ihren eigenen Platz, bevor ein MFA-Bereich sie beansprucht.
+      .sort(
+        (a, b) =>
+          a.startMin - b.startMin ||
+          PLAN_ORDER[a.plan] - PLAN_ORDER[b.plan] ||
+          (a.id < b.id ? -1 : 1),
+      );
+    for (const block of blocks) result.push({ date, block });
+  }
+  return result;
+}
+
+// ------------------------------------------------------------- Bausteine --
+
+function place(state: State, assignment: PlannedAssignment, block: DayBlock): boolean {
+  const occupied = state.occupied.get(assignment.employeeId) ?? [];
+  // Eine Person, ein Ort je Zeitfenster - auch ueber Gruppengrenzen hinweg.
+  if (
+    occupied.some(
+      (span) =>
+        span.date === assignment.date &&
+        span.startMin < block.endMin &&
+        block.startMin < span.endMin,
+    )
+  ) {
+    return false;
+  }
+
+  occupied.push({ date: assignment.date, startMin: block.startMin, endMin: block.endMin });
+  state.occupied.set(assignment.employeeId, occupied);
+  state.assignments.push(assignment);
+
+  const counterKey = areaKey(assignment.employeeId, assignment.workAreaId);
+  state.weekCounts.set(counterKey, (state.weekCounts.get(counterKey) ?? 0) + 1);
+
+  const slot = slotKey(assignment.date, assignment.dayBlockId, assignment.workAreaId);
+  state.placed.set(slot, [...(state.placed.get(slot) ?? []), assignment.employeeId]);
+
+  state.minutes.set(
+    assignment.employeeId,
+    (state.minutes.get(assignment.employeeId) ?? 0) + (block.endMin - block.startMin),
+  );
+
+  const key = dayKey(assignment.employeeId, assignment.date);
+  const set = state.areasByDay.get(key) ?? new Set<Id>();
+  set.add(assignment.workAreaId);
+  state.areasByDay.set(key, set);
+  return true;
+}
+
+function remove(state: State, assignment: PlannedAssignment, block: DayBlock | undefined): void {
+  const index = state.assignments.indexOf(assignment);
+  if (index >= 0) state.assignments.splice(index, 1);
+
+  if (block) {
+    const spans = state.occupied.get(assignment.employeeId) ?? [];
+    const at = spans.findIndex(
+      (span) =>
+        span.date === assignment.date &&
+        span.startMin === block.startMin &&
+        span.endMin === block.endMin,
+    );
+    if (at >= 0) spans.splice(at, 1);
+    state.minutes.set(
+      assignment.employeeId,
+      Math.max(
+        0,
+        (state.minutes.get(assignment.employeeId) ?? 0) - (block.endMin - block.startMin),
+      ),
     );
   }
+
+  const counterKey = areaKey(assignment.employeeId, assignment.workAreaId);
+  state.weekCounts.set(counterKey, Math.max(0, (state.weekCounts.get(counterKey) ?? 1) - 1));
+
+  const slot = slotKey(assignment.date, assignment.dayBlockId, assignment.workAreaId);
+  state.placed.set(
+    slot,
+    (state.placed.get(slot) ?? []).filter((id) => id !== assignment.employeeId),
+  );
+
+  // Bereiche des Tages nur streichen, wenn die Person dort nicht noch in
+  // einem anderen Block des Tages steht.
+  const stillThere = state.assignments.some(
+    (entry) =>
+      entry.employeeId === assignment.employeeId &&
+      entry.date === assignment.date &&
+      entry.workAreaId === assignment.workAreaId,
+  );
+  if (!stillThere) {
+    state.areasByDay
+      .get(dayKey(assignment.employeeId, assignment.date))
+      ?.delete(assignment.workAreaId);
+  }
+}
+
+function averageHistory(input: PlanInput): Map<Id, number> {
+  const perArea = new Map<Id, number[]>();
+  for (const entry of input.history) {
+    perArea.set(entry.workAreaId, [...(perArea.get(entry.workAreaId) ?? []), entry.count]);
+  }
+  const averages = new Map<Id, number>();
+  for (const [workAreaId, counts] of perArea) {
+    averages.set(workAreaId, counts.reduce((sum, value) => sum + value, 0) / counts.length);
+  }
+  return averages;
+}
+
+/** Bisherige Woche uebernehmen, soweit sie noch gueltig ist. */
+function keepPrevious(state: State, ctx: PlanContext): void {
+  const { input, blockById, areaById, employeeById, eligibilityFor, days } = ctx;
+  const ordered = [...input.previous].sort(
+    (a, b) => a.date.localeCompare(b.date) || fixedKey(a).localeCompare(fixedKey(b)),
+  );
+
+  for (const entry of ordered) {
+    const block = blockById.get(entry.dayBlockId);
+    const area = areaById.get(entry.workAreaId);
+    const employee = employeeById.get(entry.employeeId);
+    if (!block || !area || !employee || !days.includes(entry.date)) continue;
+
+    const rejection = eligibilityFor(employee, { date: entry.date, block, area });
+    if (rejection === null) {
+      place(state, { ...entry, source: 'kept', reason: 'beibehalten' }, block);
+      state.score += input.weights.stability;
+      continue;
+    }
+    if (rejection === 'ALREADY_ASSIGNED') continue;
+
+    state.diagnostics.push({
+      kind: 'dropped',
+      severity: 'warning',
+      message:
+        `${fullName(employee)} war ${labelFor(block)} in ${area.name} eingeteilt und ` +
+        `fällt dort weg: ${REJECTION_LABELS[rejection]}.`,
+      date: entry.date,
+      dayBlockId: block.id,
+      workAreaId: area.id,
+      employeeId: employee.id,
+    });
+  }
+}
+
+/** Musterwoche als Fixpunkte setzen, jede gebrochene Zeile benennen. */
+function applyTemplate(state: State, ctx: PlanContext): void {
+  const { input, blockById, areaById, employeeById, eligibilityFor, days } = ctx;
 
   for (const date of days) {
     const weekday = isoWeekday(date);
     for (const row of input.template) {
-      const block = input.dayBlocks.find((entry) => entry.id === row.dayBlockId);
+      const block = blockById.get(row.dayBlockId);
       if (!block || block.weekday !== weekday || block.kind === 'closed') continue;
-      const area = areas.find((entry) => entry.id === row.workAreaId);
-      const employee = employees.find((entry) => entry.id === row.employeeId);
+      const area = areaById.get(row.workAreaId);
+      const employee = employeeById.get(row.employeeId);
       if (!area || !employee) continue;
+
+      // Die Musterwoche darf einen Bereich nicht ueber seine Obergrenze fuellen.
+      const already = state.placed.get(slotKey(date, block.id, area.id))?.length ?? 0;
+      if (area.maxStaff !== null && already >= area.maxStaff) continue;
 
       const rejection = eligibilityFor(employee, { date, block, area });
       if (rejection === null) {
@@ -168,101 +427,6 @@ export function generateWeekPlan(input: PlanInput): PlanResult {
       }
     }
   }
-
-  // ---------------------------------------------------------- Phase B --
-  // Luecken blockweise fuellen, exakt statt gierig.
-
-  for (const date of days) {
-    const weekday = isoWeekday(date);
-    const blocks = input.dayBlocks
-      .filter((block) => block.weekday === weekday && block.kind !== 'closed')
-      .sort((a, b) => a.startMin - b.startMin);
-
-    for (const block of blocks) {
-      fillBlock(state, input, {
-        date,
-        block,
-        areas,
-        employees,
-        matrix,
-        eligibilityFor,
-        fairnessAverage,
-      });
-    }
-  }
-
-  // ---------------------------------------------------------- Phase C --
-  // Betreuungspruefung, Restverteilung, offene Pflichten melden.
-
-  enforceSupervision(state, input, areas, employees, matrix);
-  reportUnfilledSeats(state, input, days, areas, employees, matrix, eligibilityFor);
-  reportUnmetRotation(state, input, areas, employees, matrix);
-
-  return {
-    assignments: state.assignments,
-    diagnostics: state.diagnostics,
-    score: state.score,
-  };
-}
-
-// ------------------------------------------------------------- Bausteine --
-
-function place(state: State, assignment: PlannedAssignment, block: DayBlock): void {
-  const occupied = state.occupied.get(assignment.employeeId) ?? new Set<string>();
-  const key = blockKey(assignment.date, assignment.dayBlockId);
-  if (occupied.has(key)) return; // Eine Person, ein Ort je Block.
-
-  occupied.add(key);
-  state.occupied.set(assignment.employeeId, occupied);
-  state.assignments.push(assignment);
-
-  const counterKey = areaKey(assignment.employeeId, assignment.workAreaId);
-  state.weekCounts.set(counterKey, (state.weekCounts.get(counterKey) ?? 0) + 1);
-
-  const slot = slotKey(assignment.date, assignment.dayBlockId, assignment.workAreaId);
-  state.placed.set(slot, [...(state.placed.get(slot) ?? []), assignment.employeeId]);
-
-  state.minutes.set(
-    assignment.employeeId,
-    (state.minutes.get(assignment.employeeId) ?? 0) + (block.endMin - block.startMin),
-  );
-}
-
-function remove(state: State, assignment: PlannedAssignment): void {
-  const index = state.assignments.indexOf(assignment);
-  if (index >= 0) state.assignments.splice(index, 1);
-  state.occupied
-    .get(assignment.employeeId)
-    ?.delete(blockKey(assignment.date, assignment.dayBlockId));
-  const counterKey = areaKey(assignment.employeeId, assignment.workAreaId);
-  state.weekCounts.set(counterKey, Math.max(0, (state.weekCounts.get(counterKey) ?? 1) - 1));
-  const slot = slotKey(assignment.date, assignment.dayBlockId, assignment.workAreaId);
-  state.placed.set(
-    slot,
-    (state.placed.get(slot) ?? []).filter((id) => id !== assignment.employeeId),
-  );
-}
-
-function averageHistory(input: PlanInput): Map<Id, number> {
-  const perArea = new Map<Id, number[]>();
-  for (const entry of input.history) {
-    perArea.set(entry.workAreaId, [...(perArea.get(entry.workAreaId) ?? []), entry.count]);
-  }
-  const averages = new Map<Id, number>();
-  for (const [workAreaId, counts] of perArea) {
-    averages.set(workAreaId, counts.reduce((sum, value) => sum + value, 0) / counts.length);
-  }
-  return averages;
-}
-
-interface BlockContext {
-  readonly date: IsoDate;
-  readonly block: DayBlock;
-  readonly areas: readonly WorkArea[];
-  readonly employees: readonly PlanEmployee[];
-  readonly matrix: ReadonlyMap<string, MatrixEntry>;
-  readonly eligibilityFor: (employee: PlanEmployee, slot: SeatSlot) => RejectionCode | null;
-  readonly fairnessAverage: ReadonlyMap<Id, number>;
 }
 
 /**
@@ -282,15 +446,35 @@ const PASSES = [
   { requiredOnly: false, allowSupervised: true },
 ] as const;
 
-function fillBlock(state: State, input: PlanInput, ctx: BlockContext): void {
-  const { date, block, areas, employees, matrix, eligibilityFor } = ctx;
+function areasInBlock(ctx: PlanContext, block: DayBlock): WorkArea[] {
+  return ctx.areas.filter((area) => area.plan === block.plan && area.blockIds.includes(block.id));
+}
 
-  const activeAreas = areas.filter((area) => area.blockIds.includes(block.id));
+type Pass = (typeof PASSES)[number];
+
+function fillBlock(state: State, ctx: PlanContext, date: IsoDate, block: DayBlock): void {
+  for (const pass of PASSES) fillBlockPass(state, ctx, date, block, pass);
+}
+
+function fillBlockPass(
+  state: State,
+  ctx: PlanContext,
+  date: IsoDate,
+  block: DayBlock,
+  pass: Pass,
+): void {
+  const { employees, matrix, eligibilityFor } = ctx;
+
+  const activeAreas = areasInBlock(ctx, block);
   if (activeAreas.length === 0) return;
 
-  for (const pass of PASSES) {
+  {
     const candidates = employees.filter(
-      (employee) => !state.occupied.get(employee.id)?.has(blockKey(date, block.id)),
+      (employee) =>
+        !(state.occupied.get(employee.id) ?? []).some(
+          (span) =>
+            span.date === date && span.startMin < block.endMin && block.startMin < span.endMin,
+        ),
     );
     if (candidates.length === 0) return;
 
@@ -306,7 +490,7 @@ function fillBlock(state: State, input: PlanInput, ctx: BlockContext): void {
       const optional = Math.max(0, capacity - already - stillRequired);
       for (let i = 0; i < optional; i++) seats.push({ area, required: false });
     }
-    if (seats.length === 0) continue;
+    if (seats.length === 0) return;
 
     const cost: number[][] = candidates.map((employee) =>
       seats.map((seat) => {
@@ -315,11 +499,9 @@ function fillBlock(state: State, input: PlanInput, ctx: BlockContext): void {
 
         if (needsSupervision(employee, seat.area, matrix)) {
           if (!pass.allowSupervised) return FORBIDDEN;
-          if (!hasSoloPresent(state, matrix, employees, date, block.id, seat.area)) {
-            return FORBIDDEN;
-          }
+          if (!hasSoloPresent(state, ctx, date, block.id, seat.area)) return FORBIDDEN;
         }
-        return seatCost(state, input, ctx, employee, seat);
+        return seatCost(state, ctx, date, block, employee, seat);
       }),
     );
 
@@ -335,7 +517,7 @@ function fillBlock(state: State, input: PlanInput, ctx: BlockContext): void {
           workAreaId: seat.area.id,
           employeeId: employee.id,
           source: 'auto',
-          reason: reasonFor(state, input, ctx, employee, seat),
+          reason: reasonFor(state, ctx, date, block, employee, seat),
         },
         block,
       );
@@ -344,34 +526,158 @@ function fillBlock(state: State, input: PlanInput, ctx: BlockContext): void {
   }
 }
 
+/**
+ * Umplanung, zweite Stufe: der Block wird nur dann aufgeschnuert, wenn
+ * ein Pflichtplatz offen ist. Die bisherigen Personen des Blocks werden
+ * freigegeben und mit Stabilitaetspraemie neu verteilt - wer bleiben
+ * kann, bleibt; wer den offenen Platz fuellen kann, rueckt.
+ */
+function repairBlock(state: State, ctx: PlanContext, date: IsoDate, block: DayBlock): void {
+  const activeAreas = areasInBlock(ctx, block);
+  const missing = activeAreas.some(
+    (area) =>
+      (state.placed.get(slotKey(date, block.id, area.id))?.length ?? 0) <
+      minStaffFor(area, block.id),
+  );
+  if (!missing) return;
+
+  const kept = state.assignments.filter(
+    (entry) =>
+      entry.date === date &&
+      entry.dayBlockId === block.id &&
+      entry.source === 'kept' &&
+      activeAreas.some((area) => area.id === entry.workAreaId),
+  );
+  if (kept.length === 0) return;
+
+  const unfilled = () =>
+    activeAreas.reduce(
+      (sum, area) =>
+        sum +
+        Math.max(
+          0,
+          minStaffFor(area, block.id) -
+            (state.placed.get(slotKey(date, block.id, area.id))?.length ?? 0),
+        ),
+      0,
+    );
+  const unfilledBefore = unfilled();
+
+  const before = kept.map((entry) => ({ ...entry }));
+  for (const entry of kept) remove(state, entry, block);
+  fillBlock(state, ctx, date, block);
+
+  // Umstellen lohnt nur, wenn danach mehr Pflichtplaetze besetzt sind.
+  // Sonst zurueck auf den alten Stand - minimaler Eingriff.
+  if (unfilled() >= unfilledBefore) {
+    for (const entry of state.assignments.filter(
+      (entry) => entry.date === date && entry.dayBlockId === block.id && entry.source !== 'manual',
+    )) {
+      remove(state, entry, block);
+    }
+    for (const entry of before) place(state, entry, block);
+    return;
+  }
+
+  const after = state.assignments.filter(
+    (entry) => entry.date === date && entry.dayBlockId === block.id,
+  );
+  const stillMissing = unfilled() > 0;
+  const changed = before.some(
+    (entry) =>
+      !after.some(
+        (now) => now.employeeId === entry.employeeId && now.workAreaId === entry.workAreaId,
+      ),
+  );
+
+  if (!changed) return;
+
+  // Was bleibt, heisst wieder "beibehalten" - nur das Verschobene ist neu.
+  for (const entry of after) {
+    if (
+      before.some(
+        (old) => old.employeeId === entry.employeeId && old.workAreaId === entry.workAreaId,
+      )
+    ) {
+      const index = state.assignments.indexOf(entry);
+      if (index >= 0) {
+        state.assignments[index] = { ...entry, source: 'kept', reason: 'beibehalten' };
+      }
+    }
+  }
+
+  state.diagnostics.push({
+    kind: 'reshuffled',
+    severity: 'info',
+    message:
+      `${labelFor(block)}: Besetzung umgestellt, damit ` +
+      (stillMissing ? 'möglichst wenige' : 'keine') +
+      ` Pflichtplätze offen bleiben.`,
+    date,
+    dayBlockId: block.id,
+  });
+}
+
 function hasSoloPresent(
   state: State,
-  matrix: ReadonlyMap<string, MatrixEntry>,
-  employees: readonly PlanEmployee[],
+  ctx: PlanContext,
   date: IsoDate,
   blockId: Id,
   area: WorkArea,
 ): boolean {
   const present = state.placed.get(slotKey(date, blockId, area.id)) ?? [];
   return present.some((id) => {
-    const employee = employees.find((entry) => entry.id === id);
-    return employee ? !needsSupervision(employee, area, matrix) : false;
+    const employee = ctx.employeeById.get(id);
+    return employee ? !needsSupervision(employee, area, ctx.matrix) : false;
   });
+}
+
+/** Der Arbeitstag davor - innerhalb der Woche oder aus der Vorwoche. */
+function previousWorkingDay(ctx: PlanContext, date: IsoDate): IsoDate {
+  let candidate = addDays(date, -1);
+  for (let guard = 0; guard < 14; guard++) {
+    if (!isWeekend(candidate) && !ctx.input.closedDates.has(candidate)) return candidate;
+    candidate = addDays(candidate, -1);
+  }
+  return candidate;
+}
+
+function didFollowUpOrigin(
+  state: State,
+  ctx: PlanContext,
+  employee: PlanEmployee,
+  date: IsoDate,
+  area: WorkArea,
+): boolean {
+  if (area.followUpAreaId === null) return false;
+  const before = previousWorkingDay(ctx, date);
+  return state.areasByDay.get(dayKey(employee.id, before))?.has(area.followUpAreaId) ?? false;
 }
 
 function seatCost(
   state: State,
-  input: PlanInput,
-  ctx: BlockContext,
+  ctx: PlanContext,
+  date: IsoDate,
+  block: DayBlock,
   employee: PlanEmployee,
   seat: Seat,
 ): number {
+  const { input, matrix } = ctx;
   const w = input.weights;
   let cost = seat.required ? w.requiredSeat : w.fillIdleBonus;
 
-  if (isInTemplate(input, employee.id, seat.area.id, ctx.block.id)) cost += w.templateMatch;
+  if (isInTemplate(input, employee.id, seat.area.id, block.id)) cost += w.templateMatch;
+  if (
+    ctx.previousSet.has(
+      fixedKey({ date, dayBlockId: block.id, workAreaId: seat.area.id, employeeId: employee.id }),
+    )
+  ) {
+    cost += w.stability;
+  }
+  if (didFollowUpOrigin(state, ctx, employee, date, seat.area)) cost += w.followUp;
+  if (planForStaffType(employee.staffType) !== seat.area.plan) cost += w.crossPlan;
 
-  const entry = ctx.matrix.get(areaKey(employee.id, seat.area.id));
+  const entry = matrix.get(areaKey(employee.id, seat.area.id));
   const preference = entry?.preference ?? 'neutral';
   if (preference === 'preferred') cost += w.preferencePreferred;
   else if (preference === 'neutral') cost += w.preferenceNeutral;
@@ -380,12 +686,20 @@ function seatCost(
 
   const needed = effectiveMinPerWeek(
     entry ?? { clearance: 'solo', exemptRotation: false, minPerWeek: null },
-    seat.area.rotationMinPerWeek,
+    // Die Pflichtrotation gilt nur fuer die eigene Gruppe.
+    planForStaffType(employee.staffType) === seat.area.plan ? seat.area.rotationMinPerWeek : null,
   );
   const done = state.weekCounts.get(areaKey(employee.id, seat.area.id)) ?? 0;
   if (done < needed) cost += w.rotationUnmet;
+  // Umgekehrt: wer im Labor noch fehlt und dort in diesem Block noch Platz
+  // haette, soll nicht schon im ersten Durchlauf von der Anmeldung
+  // verbraucht werden. Sonst faellt die Rotation dem Zufall der
+  // Sortierung zum Opfer, obwohl genug andere fuer die Anmeldung da sind.
+  else if (hasOpenRotationElsewhere(state, ctx, date, block, employee, seat.area)) {
+    cost -= w.rotationUnmet;
+  }
 
-  if (hasRequestedAbsence(input.absences, employee.id, ctx.date)) cost += w.absenceRequested;
+  if (hasRequestedAbsence(input.absences, employee.id, date, block)) cost += w.absenceRequested;
 
   const history = input.history.find(
     (row) => row.employeeId === employee.id && row.workAreaId === seat.area.id,
@@ -397,6 +711,33 @@ function seatCost(
   cost += (w.workloadBalance * (state.minutes.get(employee.id) ?? 0)) / 60;
 
   return cost;
+}
+
+/** Ob die Person in diesem Block noch eine offene Pflichtrotation mit freiem Platz haette. */
+function hasOpenRotationElsewhere(
+  state: State,
+  ctx: PlanContext,
+  date: IsoDate,
+  block: DayBlock,
+  employee: PlanEmployee,
+  except: WorkArea,
+): boolean {
+  const plan = planForStaffType(employee.staffType);
+  for (const area of areasInBlock(ctx, block)) {
+    if (area.id === except.id || area.plan !== plan || area.rotationMinPerWeek === null) continue;
+    const entry = ctx.matrix.get(areaKey(employee.id, area.id));
+    const needed = effectiveMinPerWeek(
+      entry ?? { clearance: 'solo', exemptRotation: false, minPerWeek: null },
+      area.rotationMinPerWeek,
+    );
+    if (needed === 0) continue;
+    if ((state.weekCounts.get(areaKey(employee.id, area.id)) ?? 0) >= needed) continue;
+    const placed = state.placed.get(slotKey(date, block.id, area.id))?.length ?? 0;
+    if (area.maxStaff !== null && placed >= area.maxStaff) continue;
+    if (ctx.eligibilityFor(employee, { date, block, area }) !== null) continue;
+    return true;
+  }
+  return false;
 }
 
 function isInTemplate(input: PlanInput, employeeId: Id, workAreaId: Id, dayBlockId: Id): boolean {
@@ -411,20 +752,27 @@ function isInTemplate(input: PlanInput, employeeId: Id, workAreaId: Id, dayBlock
 /** Kurze Begruendung fuer den Tooltip im Dienstplan. */
 function reasonFor(
   state: State,
-  input: PlanInput,
-  ctx: BlockContext,
+  ctx: PlanContext,
+  date: IsoDate,
+  block: DayBlock,
   employee: PlanEmployee,
   seat: Seat,
 ): string {
-  if (isInTemplate(input, employee.id, seat.area.id, ctx.block.id)) return 'aus der Musterwoche';
+  const { input, matrix, areaById } = ctx;
+  if (isInTemplate(input, employee.id, seat.area.id, block.id)) return 'aus der Musterwoche';
+  if (didFollowUpOrigin(state, ctx, employee, date, seat.area)) {
+    const origin = seat.area.followUpAreaId ? areaById.get(seat.area.followUpAreaId) : undefined;
+    return `Folgeaufgabe zu ${origin?.name ?? 'Vortag'}`;
+  }
 
-  const entry = ctx.matrix.get(areaKey(employee.id, seat.area.id));
+  const entry = matrix.get(areaKey(employee.id, seat.area.id));
   const needed = effectiveMinPerWeek(
     entry ?? { clearance: 'solo', exemptRotation: false, minPerWeek: null },
-    seat.area.rotationMinPerWeek,
+    planForStaffType(employee.staffType) === seat.area.plan ? seat.area.rotationMinPerWeek : null,
   );
   const done = state.weekCounts.get(areaKey(employee.id, seat.area.id)) ?? 0;
   if (done < needed) return `Pflichtrotation ${seat.area.name}`;
+  if (planForStaffType(employee.staffType) !== seat.area.plan) return 'Aushilfe in anderer Gruppe';
   if (entry?.preference === 'preferred') return 'bevorzugter Bereich';
   if (entry?.preference === 'never') return 'Notbesetzung – eigentlich nicht gewünscht';
   if (entry?.preference === 'dislike') return 'trotz Abneigung eingeteilt';
@@ -435,33 +783,29 @@ function reasonFor(
  * Nachtraegliche Betreuungspruefung.
  *
  * Der zweite Durchlauf kann strukturell keinen unbetreuten Azubi erzeugen.
- * Aus der Musterwoche oder aus gesperrten Zuweisungen kann aber einer
- * kommen - der wird hier entfernt und gemeldet, statt still stehen zu bleiben.
+ * Aus der Musterwoche, der bisherigen Woche oder aus gesperrten
+ * Zuweisungen kann aber einer kommen - der wird hier entfernt und
+ * gemeldet, statt still stehen zu bleiben.
  */
-function enforceSupervision(
-  state: State,
-  input: PlanInput,
-  areas: readonly WorkArea[],
-  employees: readonly PlanEmployee[],
-  matrix: ReadonlyMap<string, MatrixEntry>,
-): void {
+function enforceSupervision(state: State, ctx: PlanContext): void {
+  const { areaById, employeeById, blockById, matrix } = ctx;
   for (const assignment of [...state.assignments]) {
     if (assignment.source === 'manual') continue; // Gesperrtes bleibt stehen.
-    const area = areas.find((entry) => entry.id === assignment.workAreaId);
-    const employee = employees.find((entry) => entry.id === assignment.employeeId);
+    const area = areaById.get(assignment.workAreaId);
+    const employee = employeeById.get(assignment.employeeId);
     if (!area || !employee || !needsSupervision(employee, area, matrix)) continue;
 
     const others = (
       state.placed.get(slotKey(assignment.date, assignment.dayBlockId, area.id)) ?? []
     )
       .filter((id) => id !== employee.id)
-      .map((id) => employees.find((entry) => entry.id === id))
+      .map((id) => employeeById.get(id))
       .filter((entry): entry is PlanEmployee => entry !== undefined);
 
     if (others.some((other) => !needsSupervision(other, area, matrix))) continue;
 
-    remove(state, assignment);
-    const block = input.dayBlocks.find((entry) => entry.id === assignment.dayBlockId);
+    const block = blockById.get(assignment.dayBlockId);
+    remove(state, assignment, block);
     state.diagnostics.push({
       kind: 'supervision_dropped',
       severity: 'warning',
@@ -486,76 +830,66 @@ const labelFor = (block: DayBlock | undefined): string =>
  * Ablehnungsgruende. Das ist der zentrale Unterschied zur
  * Vorgaengerversion, die still versagte.
  */
-function reportUnfilledSeats(
-  state: State,
-  input: PlanInput,
-  days: readonly IsoDate[],
-  areas: readonly WorkArea[],
-  employees: readonly PlanEmployee[],
-  matrix: ReadonlyMap<string, MatrixEntry>,
-  eligibilityFor: (employee: PlanEmployee, slot: SeatSlot) => RejectionCode | null,
-): void {
-  for (const date of days) {
-    const weekday = isoWeekday(date);
-    const blocks = input.dayBlocks.filter(
-      (block) => block.weekday === weekday && block.kind !== 'closed',
-    );
+function reportUnfilledSeats(state: State, ctx: PlanContext, blocks: readonly DatedBlock[]): void {
+  const { employees, matrix, eligibilityFor } = ctx;
 
-    for (const block of blocks) {
-      for (const area of areas) {
-        if (!area.blockIds.includes(block.id)) continue;
-        const required = minStaffFor(area, block.id);
-        const placedCount = state.placed.get(slotKey(date, block.id, area.id))?.length ?? 0;
-        if (placedCount >= required) continue;
+  for (const { date, block } of blocks) {
+    for (const area of areasInBlock(ctx, block)) {
+      const required = minStaffFor(area, block.id);
+      const placedCount = state.placed.get(slotKey(date, block.id, area.id))?.length ?? 0;
+      if (placedCount >= required) continue;
 
-        const reasons = new Map<RejectionCode, number>();
-        for (const employee of employees) {
-          let rejection = eligibilityFor(employee, { date, block, area });
-          // Die Betreuungspflicht wird nicht in checkEligibility geprueft,
-          // weil sie vom Rest der Loesung abhaengt. Fuer die Diagnose ist
-          // sie aber oft der eigentliche Grund und darf nicht fehlen.
-          if (
-            rejection === null &&
-            needsSupervision(employee, area, matrix) &&
-            !hasSoloPresent(state, matrix, employees, date, block.id, area)
-          ) {
-            rejection = 'NEEDS_SUPERVISION';
-          }
-          if (rejection !== null) reasons.set(rejection, (reasons.get(rejection) ?? 0) + 1);
+      // Nur die eigene Gruppe zaehlen - sonst erklaert die Diagnose der
+      // MFA-Anmeldung, dass sechs Aerzte "zur anderen Gruppe gehoeren".
+      const pool = employees.filter(
+        (employee) =>
+          planForStaffType(employee.staffType) === area.plan ||
+          matrix.has(areaKey(employee.id, area.id)),
+      );
+
+      const reasons = new Map<RejectionCode, number>();
+      for (const employee of pool) {
+        let rejection = eligibilityFor(employee, { date, block, area });
+        // Die Betreuungspflicht wird nicht in checkEligibility geprueft,
+        // weil sie vom Rest der Loesung abhaengt. Fuer die Diagnose ist
+        // sie aber oft der eigentliche Grund und darf nicht fehlen.
+        if (
+          rejection === null &&
+          needsSupervision(employee, area, matrix) &&
+          !hasSoloPresent(state, ctx, date, block.id, area)
+        ) {
+          rejection = 'NEEDS_SUPERVISION';
         }
-
-        const breakdown = [...reasons.entries()]
-          .sort((a, b) => b[1] - a[1])
-          .map(([code, count]) => `${count}× ${REJECTION_LABELS[code]}`)
-          .join(', ');
-
-        state.diagnostics.push({
-          kind: 'unfilled_required',
-          severity: area.isCritical ? 'error' : 'warning',
-          message:
-            `${area.name}, ${labelFor(block)}: ${required - placedCount} von ${required} ` +
-            `Plätzen unbesetzt. ${employees.length} Personen geprüft` +
-            (breakdown ? ` – ${breakdown}.` : '.'),
-          date,
-          dayBlockId: block.id,
-          workAreaId: area.id,
-        });
+        if (rejection !== null) reasons.set(rejection, (reasons.get(rejection) ?? 0) + 1);
       }
+
+      const breakdown = [...reasons.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .map(([code, count]) => `${count}× ${REJECTION_LABELS[code]}`)
+        .join(', ');
+
+      state.diagnostics.push({
+        kind: 'unfilled_required',
+        severity: area.isCritical ? 'error' : 'warning',
+        message:
+          `${area.name}, ${labelFor(block)}: ${required - placedCount} von ${required} ` +
+          `Plätzen unbesetzt. ${pool.length} Personen geprüft` +
+          (breakdown ? ` – ${breakdown}.` : '.'),
+        date,
+        dayBlockId: block.id,
+        workAreaId: area.id,
+      });
     }
   }
 }
 
 /** Wer diese Woche eine Pflichtrotation nicht erfuellt hat. */
-function reportUnmetRotation(
-  state: State,
-  input: PlanInput,
-  areas: readonly WorkArea[],
-  employees: readonly PlanEmployee[],
-  matrix: ReadonlyMap<string, MatrixEntry>,
-): void {
+function reportUnmetRotation(state: State, ctx: PlanContext): void {
+  const { areas, employees, matrix } = ctx;
   for (const area of areas) {
     if (area.rotationMinPerWeek === null) continue;
     for (const employee of employees) {
+      if (planForStaffType(employee.staffType) !== area.plan) continue;
       const entry = matrix.get(areaKey(employee.id, area.id));
       const needed = effectiveMinPerWeek(
         entry ?? { clearance: 'solo', exemptRotation: false, minPerWeek: null },
@@ -576,5 +910,37 @@ function reportUnmetRotation(
       });
     }
   }
-  void input;
+}
+
+/** Unterschied zur bisherigen Woche - Grundlage des Umplanungsvorschlags. */
+function diffAgainstPrevious(state: State, input: PlanInput): PlanChange[] {
+  const before = new Map<string, FixedAssignment>();
+  for (const entry of [...input.previous, ...input.pinned]) before.set(fixedKey(entry), entry);
+  const after = new Map<string, FixedAssignment>();
+  for (const entry of state.assignments) after.set(fixedKey(entry), entry);
+
+  const strip = (entry: FixedAssignment, kind: PlanChange['kind']): PlanChange => ({
+    kind,
+    date: entry.date,
+    dayBlockId: entry.dayBlockId,
+    workAreaId: entry.workAreaId,
+    employeeId: entry.employeeId,
+  });
+  const changes: PlanChange[] = [];
+  for (const [key, entry] of before) {
+    if (!after.has(key)) changes.push(strip(entry, 'removed'));
+  }
+  for (const [key, entry] of after) {
+    if (!before.has(key)) changes.push(strip(entry, 'added'));
+  }
+  // Erst was wegfaellt, dann was dazukommt - so liest sich der Vorschlag.
+  const order = { removed: 0, added: 1 } as const;
+  return changes.sort(
+    (a, b) =>
+      a.date.localeCompare(b.date) ||
+      a.dayBlockId.localeCompare(b.dayBlockId) ||
+      a.workAreaId.localeCompare(b.workAreaId) ||
+      order[a.kind] - order[b.kind] ||
+      a.employeeId.localeCompare(b.employeeId),
+  );
 }

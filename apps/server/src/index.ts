@@ -6,7 +6,12 @@ import { SERVER_HOST, SERVER_PORT, dataDirectory, databaseFile } from './config.
 import { openDatabase } from './db/index.js';
 import { runMigrations } from './db/migrate.js';
 import { isSeeded, seedDatabase } from './db/seed.js';
-import { handleRecoveryMarker, needsSetup, printRecoveryNotice } from './auth/bootstrap.js';
+import {
+  RECOVERY_ENV,
+  handleRecoveryMarker,
+  needsSetup,
+  printRecoveryNotice,
+} from './auth/bootstrap.js';
 import { purgeExpiredSessions } from './auth/sessions.js';
 import { createApp } from './api/app.js';
 
@@ -57,11 +62,17 @@ async function main(): Promise<void> {
 
   // Ein vergessenes Passwort laesst sich ueber eine Marker-Datei im
   // Datenverzeichnis zuruecksetzen - siehe README.
-  printRecoveryNotice(await handleRecoveryMarker(db, dataDirectory()));
+  printRecoveryNotice(
+    await handleRecoveryMarker(db, dataDirectory(), process.env[RECOVERY_ENV] === '1'),
+  );
 
   if (needsSetup(db)) {
     console.log(
       '[server] Noch kein Zugang angelegt - die Oberflaeche fuehrt durch die Einrichtung.',
+    );
+  } else {
+    console.log(
+      `[server] Zugang vergessen? Server mit ${RECOVERY_ENV}=1 starten (start-server.bat reset)`,
     );
   }
   purgeExpiredSessions(db);

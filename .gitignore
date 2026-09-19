@@ -32,3 +32,6 @@ npm-debug.log*
 *.sqlite3
 secret.key
 backups/
+
+# Marker-Datei fuer das Zuruecksetzen des Zugangs gehoert ins Datenverzeichnis, nie ins Repo.
+ZUGANG-ZURUECKSETZEN*

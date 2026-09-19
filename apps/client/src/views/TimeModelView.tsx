@@ -1,8 +1,10 @@
 import { useState } from 'react';
 import { Check, Clock, Loader2, Plus, Trash2 } from 'lucide-react';
-import type { BlockKind, DayBlock, PracticeWeekday } from '@haeppi/shared';
+import type { BlockKind, DayBlock, PlanKind, PracticeWeekday } from '@haeppi/shared';
 import {
   BLOCK_KIND_LABELS,
+  PLAN_KINDS,
+  PLAN_LABELS,
   PRACTICE_WEEKDAYS,
   WEEKDAY_LABELS,
   formatHHMM,
@@ -22,6 +24,7 @@ const KIND_STYLE: Record<BlockKind, string> = {
 
 export function TimeModelView() {
   const { data: dayBlocks, isLoading } = useDayBlocks();
+  const [plan, setPlan] = useState<PlanKind>('mfa');
 
   if (isLoading || !dayBlocks) {
     return (
@@ -30,10 +33,27 @@ export function TimeModelView() {
       </div>
     );
   }
-  return <TimeModelForm saved={dayBlocks} />;
+  // Der Schluessel erzwingt ein frisches Formular je Gruppe - sonst blieben
+  // ungespeicherte Aenderungen der einen Gruppe im Entwurf der anderen.
+  return (
+    <TimeModelForm
+      key={plan}
+      plan={plan}
+      onPlanChange={setPlan}
+      saved={dayBlocks.filter((block) => block.plan === plan)}
+    />
+  );
 }
 
-function TimeModelForm({ saved }: { saved: readonly DayBlock[] }) {
+function TimeModelForm({
+  plan,
+  onPlanChange,
+  saved,
+}: {
+  plan: PlanKind;
+  onPlanChange: (plan: PlanKind) => void;
+  saved: readonly DayBlock[];
+}) {
   const [blocks, setBlocks] = useState<DraftBlock[]>(() => saved.map((block) => ({ ...block })));
   const save = useSaveDayBlocks();
 
@@ -55,6 +75,7 @@ function TimeModelForm({ saved }: { saved: readonly DayBlock[] }) {
     setBlocks((old) => [
       ...old,
       {
+        plan,
         weekday,
         label: 'Neuer Block',
         kind: 'consultation',
@@ -71,27 +92,51 @@ function TimeModelForm({ saved }: { saved: readonly DayBlock[] }) {
     const normalized = PRACTICE_WEEKDAYS.flatMap((weekday) =>
       ofDay(weekday).map((entry, position) => ({ ...entry.block, sortOrder: position + 1 })),
     );
-    save.mutate({ blocks: normalized, force });
+    save.mutate({ plan, blocks: normalized, force });
   };
 
   return (
     <div className="p-8">
       <PageHeader
         title="Zeitmodell"
-        subtitle="Wann die Praxis Sprechstunde hat und wann Innendienst ist"
+        subtitle={`Zeitfenster der Gruppe ${PLAN_LABELS[plan]} – jede Gruppe hat ihr eigenes`}
         action={
-          <Button
-            variant="primary"
-            disabled={!dirty || save.isPending}
-            onClick={() => submit(false)}
-          >
-            {save.isPending ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : (
-              <Check className="size-4" />
-            )}
-            Speichern
-          </Button>
+          <div className="flex items-center gap-3">
+            <div className="flex rounded-lg border border-slate-200 p-1 dark:border-slate-700">
+              {PLAN_KINDS.map((value) => (
+                <button
+                  key={value}
+                  onClick={() => {
+                    if (
+                      !dirty ||
+                      window.confirm('Ungespeicherte Änderungen verwerfen und Gruppe wechseln?')
+                    ) {
+                      onPlanChange(value);
+                    }
+                  }}
+                  className={`rounded-md px-3 py-1.5 text-sm transition ${
+                    plan === value
+                      ? 'bg-blue-600 font-medium text-white'
+                      : 'hover:bg-slate-100 dark:hover:bg-slate-800'
+                  }`}
+                >
+                  {PLAN_LABELS[value]}
+                </button>
+              ))}
+            </div>
+            <Button
+              variant="primary"
+              disabled={!dirty || save.isPending}
+              onClick={() => submit(false)}
+            >
+              {save.isPending ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Check className="size-4" />
+              )}
+              Speichern
+            </Button>
+          </div>
         }
       />
 
@@ -104,7 +149,9 @@ function TimeModelForm({ saved }: { saved: readonly DayBlock[] }) {
             <strong className="font-medium text-slate-900 dark:text-slate-100">Innendienst</strong>{' '}
             heißt Praxis zu, aber Abrechnung, Rezepte, Befunde und Hausbesuche laufen weiter. Die
             Mittagspause liegt im Innendienst und wird nur von der Arbeitszeit abgezogen, nicht
-            verplant.
+            verplant. Die Ärzte teilen den Vormittag in Sprechstunde (08–11) und Infekt-/
+            Videosprechstunde (11–13); die MFA arbeiten durchgehend – deshalb hat jede Gruppe ihr
+            eigenes Zeitmodell.
           </span>
         </p>
       </Card>

@@ -1,9 +1,12 @@
 import { useState } from 'react';
 import { AlertTriangle, Loader2, Pencil, Plus, Trash2 } from 'lucide-react';
-import type { DayBlock, Skill, WorkArea } from '@haeppi/shared';
+import type { DayBlock, PlanKind, Skill, WorkArea } from '@haeppi/shared';
 import {
   AREA_ICONS,
   AREA_KIND_LABELS,
+  AREA_LOCATION_LABELS,
+  PLAN_KINDS,
+  PLAN_LABELS,
   SKILL_CATEGORIES,
   WEEKDAY_SHORT,
   formatHHMM,
@@ -80,7 +83,7 @@ function AreaList() {
 
   if (isLoading) return <Loader2 className="size-5 animate-spin text-slate-400" />;
 
-  const byPlan = (plan: 'mfa' | 'doctor') => (areas ?? []).filter((area) => area.plan === plan);
+  const byPlan = (plan: PlanKind) => (areas ?? []).filter((area) => area.plan === plan);
 
   return (
     <div className="space-y-6">
@@ -90,15 +93,10 @@ function AreaList() {
         </Button>
       </div>
 
-      {(
-        [
-          ['mfa', 'MFA'],
-          ['doctor', 'Ärzte'],
-        ] as const
-      ).map(([plan, label]) => (
+      {PLAN_KINDS.map((plan) => (
         <section key={plan}>
           <h2 className="mb-2 text-sm font-medium tracking-wide text-slate-500 uppercase">
-            {label}
+            {PLAN_LABELS[plan]}
           </h2>
           <Card className="divide-y divide-slate-100 dark:divide-slate-800">
             {byPlan(plan).length === 0 ? (
@@ -121,7 +119,14 @@ function AreaList() {
                           Pflicht {area.rotationMinPerWeek}×/Woche
                         </Badge>
                       )}
-                      {area.requiresHomeoffice && <Badge tone="emerald">Homeoffice nötig</Badge>}
+                      {area.location === 'home' && <Badge tone="emerald">nur Homeoffice</Badge>}
+                      {area.location === 'any' && <Badge tone="emerald">auch Homeoffice</Badge>}
+                      {area.followUpAreaId && (
+                        <Badge tone="blue" title="Bevorzugt, wer am Vortag im Ursprungsbereich war">
+                          Folgeaufgabe zu{' '}
+                          {(areas ?? []).find((a) => a.id === area.followUpAreaId)?.name ?? '?'}
+                        </Badge>
+                      )}
                     </div>
                     <p className="mt-0.5 text-sm text-slate-500">{area.description}</p>
                     <p className="mt-1 text-xs text-slate-500">
@@ -177,6 +182,7 @@ function AreaList() {
           area={editing}
           skills={skills ?? []}
           dayBlocks={dayBlocks ?? []}
+          allAreas={areas ?? []}
           onClose={() => setEditing(undefined)}
         />
       )}
@@ -193,8 +199,9 @@ function emptyArea(): WorkAreaInput {
     isCritical: false,
     minStaff: 1,
     maxStaff: 1,
-    requiresHomeoffice: false,
+    location: 'practice',
     rotationMinPerWeek: null,
+    followUpAreaId: null,
     icon: '🏥',
     color: '#3b82f6',
     sortOrder: 50,
@@ -209,11 +216,13 @@ function AreaEditor({
   area,
   skills,
   dayBlocks,
+  allAreas,
   onClose,
 }: {
   area: WorkArea | null;
   skills: readonly Skill[];
   dayBlocks: readonly DayBlock[];
+  allAreas: readonly WorkArea[];
   onClose: () => void;
 }) {
   const [draft, setDraft] = useState<WorkAreaInput>(() => {
@@ -232,10 +241,14 @@ function AreaEditor({
         : [...draft.blockIds, blockId],
     });
 
+  // Nur die Bloecke der eigenen Gruppe - jede Gruppe hat ihr eigenes Zeitmodell.
   const byWeekday = [1, 2, 3, 4, 5].map((weekday) => ({
     weekday,
     blocks: dayBlocks
-      .filter((block) => block.weekday === weekday && block.kind !== 'closed')
+      .filter(
+        (block) =>
+          block.plan === draft.plan && block.weekday === weekday && block.kind !== 'closed',
+      )
       .sort((a, b) => a.startMin - b.startMin),
   }));
 
@@ -272,13 +285,18 @@ function AreaEditor({
               autoFocus
             />
           </Field>
-          <Field label="Dienstplan">
+          <Field label="Gruppe" hint="Beim Wechsel der Gruppe werden die Zeitfenster neu gewählt.">
             <Select
               value={draft.plan}
-              onChange={(event) => patch({ plan: event.target.value as 'mfa' | 'doctor' })}
+              onChange={(event) =>
+                patch({ plan: event.target.value as PlanKind, blockIds: [], blockMinStaff: {} })
+              }
             >
-              <option value="mfa">MFA</option>
-              <option value="doctor">Ärzte</option>
+              {PLAN_KINDS.map((plan) => (
+                <option key={plan} value={plan}>
+                  {PLAN_LABELS[plan]}
+                </option>
+              ))}
             </Select>
           </Field>
           <Field label="Beschreibung" className="sm:col-span-2">
@@ -336,7 +354,7 @@ function AreaEditor({
           </Field>
           <Field
             label="Pflichtrotation pro Woche"
-            hint="leer = keine. Gilt für jede Person des Plans."
+            hint="leer = keine. Gilt für jede Person der Gruppe."
           >
             <TextInput
               type="number"
@@ -358,6 +376,39 @@ function AreaEditor({
               onChange={(event) => patch({ sortOrder: Number(event.target.value) })}
             />
           </Field>
+          <Field
+            label="Ort"
+            hint="Wer an dem Tag im Homeoffice ist, kann nur Homeoffice-Bereiche übernehmen."
+          >
+            <Select
+              value={draft.location}
+              onChange={(event) => patch({ location: event.target.value as WorkArea['location'] })}
+            >
+              {Object.entries(AREA_LOCATION_LABELS).map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field
+            label="Folgeaufgabe zu"
+            hint="Bevorzugt wird, wer am Vortag dort war – z. B. Hausbesuche schreiben nach Hausbesuchen."
+          >
+            <Select
+              value={draft.followUpAreaId ?? ''}
+              onChange={(event) => patch({ followUpAreaId: event.target.value || null })}
+            >
+              <option value="">– keine –</option>
+              {allAreas
+                .filter((other) => other.id !== area?.id)
+                .map((other) => (
+                  <option key={other.id} value={other.id}>
+                    {other.icon} {other.name} ({PLAN_LABELS[other.plan]})
+                  </option>
+                ))}
+            </Select>
+          </Field>
         </div>
 
         <div className="flex flex-wrap gap-6">
@@ -365,11 +416,6 @@ function AreaEditor({
             label="Kritischer Bereich (muss besetzt sein)"
             checked={draft.isCritical}
             onChange={(value) => patch({ isCritical: value })}
-          />
-          <Checkbox
-            label="Setzt Homeoffice-Berechtigung voraus"
-            checked={draft.requiresHomeoffice}
-            onChange={(value) => patch({ requiresHomeoffice: value })}
           />
           <Checkbox
             label="Aktiv"

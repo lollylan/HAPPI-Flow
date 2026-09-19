@@ -29,7 +29,13 @@ async function adminAgent() {
   return { agent, csrf: csrf ?? '' };
 }
 
-const workDay = { isWorking: true, startMin: 480, endMin: 1020, breakMin: 60 };
+const workDay = {
+  isWorking: true,
+  startMin: 480,
+  endMin: 1020,
+  breakMin: 60,
+  location: 'practice',
+};
 const fullWeek = { 1: workDay, 2: workDay, 3: workDay, 4: workDay, 5: workDay };
 
 function employeePayload(overrides: Record<string, unknown> = {}) {
@@ -37,7 +43,6 @@ function employeePayload(overrides: Record<string, unknown> = {}) {
     firstName: 'Maria',
     lastName: 'Huber',
     staffType: 'mfa',
-    isPcm: false,
     employment: 'fulltime',
     targetHoursPerWeek: 40,
     canHomeoffice: false,
@@ -197,7 +202,8 @@ describe('Arbeitsbereiche', () => {
       isCritical: true,
       minStaff: 3,
       maxStaff: 1,
-      requiresHomeoffice: false,
+      location: 'practice',
+      followUpAreaId: null,
       rotationMinPerWeek: null,
       icon: '📋',
       color: '#3b82f6',
@@ -230,24 +236,33 @@ describe('Arbeitsbereiche', () => {
 });
 
 describe('Zeitmodell', () => {
-  it('liefert das geseedete Wochenmodell', async () => {
+  it('liefert das geseedete Wochenmodell je Gruppe', async () => {
     const { agent } = await adminAgent();
-    const { dayBlocks } = (await agent.get('/api/day-blocks')).body;
-    expect(dayBlocks).toHaveLength(13);
+    const { dayBlocks } = (await agent.get('/api/day-blocks')).body as {
+      dayBlocks: { plan: string; weekday: number; startMin: number; kind: string }[];
+    };
 
-    const monday = dayBlocks.filter((b: { weekday: number }) => b.weekday === 1);
-    expect(monday.map((b: { startMin: number }) => b.startMin)).toEqual([480, 780, 960]);
-    expect(monday[1].kind).toBe('backoffice');
+    const mfaMonday = dayBlocks.filter((b) => b.plan === 'mfa' && b.weekday === 1);
+    expect(mfaMonday.map((b) => b.startMin)).toEqual([480, 780, 960]);
+    expect(mfaMonday[1]?.kind).toBe('backoffice');
+
+    // Die Aerzte teilen den Vormittag: 08-11 Sprechstunde, 11-13 Infekt/Video.
+    const doctorMonday = dayBlocks.filter((b) => b.plan === 'doctor' && b.weekday === 1);
+    expect(doctorMonday.map((b) => b.startMin)).toEqual([480, 660, 780, 960]);
+
+    // Mittwoch: kein Nachmittag, bei keiner Gruppe.
+    expect(dayBlocks.filter((b) => b.weekday === 3 && b.startMin === 960)).toHaveLength(0);
   });
 
   it('lehnt sich überschneidende Blöcke ab', async () => {
     const { agent, csrf } = await adminAgent();
     const response = await agent
-      .put('/api/day-blocks')
+      .put('/api/day-blocks/mfa')
       .set(CSRF_HEADER, csrf)
       .send({
         blocks: [
           {
+            plan: 'mfa',
             weekday: 1,
             label: 'Vormittag',
             kind: 'consultation',
@@ -256,6 +271,7 @@ describe('Zeitmodell', () => {
             sortOrder: 1,
           },
           {
+            plan: 'mfa',
             weekday: 1,
             label: 'Innendienst',
             kind: 'backoffice',
@@ -271,14 +287,15 @@ describe('Zeitmodell', () => {
     expect(response.body.error).toContain('12:00');
   });
 
-  it('erlaubt aneinandergrenzende Blöcke', async () => {
+  it('erlaubt aneinandergrenzende Blöcke und lässt andere Gruppen in Ruhe', async () => {
     const { agent, csrf } = await adminAgent();
     const response = await agent
-      .put('/api/day-blocks?force=1')
+      .put('/api/day-blocks/mfa?force=1')
       .set(CSRF_HEADER, csrf)
       .send({
         blocks: [
           {
+            plan: 'mfa',
             weekday: 1,
             label: 'Vormittag',
             kind: 'consultation',
@@ -287,6 +304,7 @@ describe('Zeitmodell', () => {
             sortOrder: 1,
           },
           {
+            plan: 'mfa',
             weekday: 1,
             label: 'Innendienst',
             kind: 'backoffice',
@@ -298,7 +316,11 @@ describe('Zeitmodell', () => {
       });
 
     expect(response.status).toBe(200);
-    expect(response.body.dayBlocks).toHaveLength(2);
+    const blocks = response.body.dayBlocks as { plan: string }[];
+    expect(blocks.filter((b) => b.plan === 'mfa')).toHaveLength(2);
+    // Aerzte und PCM sind unangetastet.
+    expect(blocks.filter((b) => b.plan === 'doctor')).toHaveLength(18);
+    expect(blocks.filter((b) => b.plan === 'pcm')).toHaveLength(13);
   });
 
   it('warnt, wenn ein Block mit Planung wegfallen würde', async () => {
@@ -309,7 +331,10 @@ describe('Zeitmodell', () => {
     ).run(randomUUID(), employeeId);
 
     const { agent, csrf } = await adminAgent();
-    const response = await agent.put('/api/day-blocks').set(CSRF_HEADER, csrf).send({ blocks: [] });
+    const response = await agent
+      .put('/api/day-blocks/mfa')
+      .set(CSRF_HEADER, csrf)
+      .send({ blocks: [] });
 
     expect(response.status).toBe(400);
     expect(response.body.error).toContain('Vormittag');
@@ -318,23 +343,27 @@ describe('Zeitmodell', () => {
 
   it('behält beim Speichern die IDs unveränderter Blöcke', async () => {
     const { agent, csrf } = await adminAgent();
-    const before = (await agent.get('/api/day-blocks')).body.dayBlocks;
+    const before = (
+      (await agent.get('/api/day-blocks')).body.dayBlocks as {
+        id: string;
+        plan: string;
+        label: string;
+      }[]
+    ).filter((b) => b.plan === 'mfa');
 
     const response = await agent
-      .put('/api/day-blocks')
+      .put('/api/day-blocks/mfa')
       .set(CSRF_HEADER, csrf)
       .send({
-        blocks: before.map((block: { id: string; label: string }) => ({
-          ...block,
-          label: `${block.label} `.trim(),
-        })),
+        blocks: before.map((block) => ({ ...block, label: `${block.label} `.trim() })),
       });
 
     expect(response.status).toBe(200);
     // Bleiben die IDs erhalten, ueberleben Musterwoche und Bereichszuordnung.
-    expect(response.body.dayBlocks.map((b: { id: string }) => b.id).sort()).toEqual(
-      before.map((b: { id: string }) => b.id).sort(),
+    const after = (response.body.dayBlocks as { id: string; plan: string }[]).filter(
+      (b) => b.plan === 'mfa',
     );
+    expect(after.map((b) => b.id).sort()).toEqual(before.map((b) => b.id).sort());
   });
 });
 

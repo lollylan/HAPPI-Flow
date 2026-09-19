@@ -1,5 +1,10 @@
-import { DEFAULT_HOLIDAY_SETTINGS, PRACTICE_WEEKDAYS, parseHHMM } from '@haeppi/shared';
-import type { PracticeWeekday } from '@haeppi/shared';
+import {
+  DEFAULT_HOLIDAY_SETTINGS,
+  DEFAULT_WEIGHTS,
+  PRACTICE_WEEKDAYS,
+  parseHHMM,
+} from '@haeppi/shared';
+import type { AreaKind, AreaLocation, PlanKind, PracticeWeekday } from '@haeppi/shared';
 import type { Db } from './index.js';
 
 /**
@@ -15,66 +20,97 @@ import type { Db } from './index.js';
 /**
  * Tage mit Nachmittagssprechstunde: Mo, Di, Do.
  * An den uebrigen Praxistagen (Mi, Fr) schliesst die Praxis mittags;
- * gearbeitet wird dann nur noch im Homeoffice.
+ * gearbeitet wird dann nur noch im Innendienst oder Homeoffice.
  */
 const FULL_DAYS: readonly PracticeWeekday[] = [1, 2, 4];
 
 interface SeedBlock {
   id: string;
+  plan: PlanKind;
   weekday: PracticeWeekday;
   label: string;
   kind: 'consultation' | 'backoffice' | 'closed';
   startMin: number;
   endMin: number;
   sortOrder: number;
+  /** Kennung fuer die Zuordnung der Bereiche. */
+  tag: string;
 }
 
+/**
+ * Zeitmodell je Gruppe.
+ *
+ * MFA und PCM: Vormittag 08-13, Innendienst 13-16, Nachmittag 16-18 (Mo/Di/Do).
+ * Aerzte: der Vormittag ist geteilt - bis 11 normale Sprechstunde, 11-13
+ * Infektsprechstunde und parallel Videosprechstunde.
+ */
 function buildDayBlocks(): SeedBlock[] {
   const blocks: SeedBlock[] = [];
-  for (const weekday of PRACTICE_WEEKDAYS) {
+
+  const push = (
+    plan: PlanKind,
+    prefix: string,
+    weekday: PracticeWeekday,
+    tag: string,
+    label: string,
+    kind: SeedBlock['kind'],
+    from: string,
+    to: string,
+    sortOrder: number,
+  ) =>
     blocks.push({
-      id: `blk-${weekday}-vm`,
+      id: `${prefix}-${weekday}-${tag}`,
+      plan,
       weekday,
-      label: 'Vormittag',
-      kind: 'consultation',
-      startMin: parseHHMM('08:00'),
-      endMin: parseHHMM('13:00'),
-      sortOrder: 1,
+      label,
+      kind,
+      startMin: parseHHMM(from),
+      endMin: parseHHMM(to),
+      sortOrder,
+      tag,
     });
 
-    if (FULL_DAYS.includes(weekday)) {
-      // Praxis geschlossen, es wird aber gearbeitet: Abrechnung, Rezepte,
-      // Befunde, Hausbesuche. Die Mittagspause liegt hier drin und wird
-      // nur als Zeitabzug gerechnet, nicht verplant.
-      blocks.push({
-        id: `blk-${weekday}-id`,
-        weekday,
-        label: 'Innendienst',
-        kind: 'backoffice',
-        startMin: parseHHMM('13:00'),
-        endMin: parseHHMM('16:00'),
-        sortOrder: 2,
-      });
-      blocks.push({
-        id: `blk-${weekday}-nm`,
-        weekday,
-        label: 'Nachmittag',
-        kind: 'consultation',
-        startMin: parseHHMM('16:00'),
-        endMin: parseHHMM('18:00'),
-        sortOrder: 3,
-      });
-    } else {
-      // Mi und Fr nachmittags ist die Praxis zu; gearbeitet wird im Homeoffice.
-      blocks.push({
-        id: `blk-${weekday}-id`,
-        weekday,
-        label: 'Innendienst (Homeoffice)',
-        kind: 'backoffice',
-        startMin: parseHHMM('13:00'),
-        endMin: parseHHMM('16:00'),
-        sortOrder: 2,
-      });
+  for (const weekday of PRACTICE_WEEKDAYS) {
+    const full = FULL_DAYS.includes(weekday);
+
+    // MFA - die IDs ohne Praefix bleiben aus Kompatibilitaet erhalten.
+    push('mfa', 'blk', weekday, 'vm', 'Vormittag', 'consultation', '08:00', '13:00', 1);
+    push(
+      'mfa',
+      'blk',
+      weekday,
+      'id',
+      full ? 'Innendienst' : 'Innendienst (Homeoffice)',
+      'backoffice',
+      '13:00',
+      '16:00',
+      2,
+    );
+    if (full) push('mfa', 'blk', weekday, 'nm', 'Nachmittag', 'consultation', '16:00', '18:00', 3);
+
+    // PCM
+    push('pcm', 'blk-pcm', weekday, 'vm', 'Vormittag', 'consultation', '08:00', '13:00', 1);
+    push('pcm', 'blk-pcm', weekday, 'id', 'Innendienst', 'backoffice', '13:00', '16:00', 2);
+    if (full) {
+      push('pcm', 'blk-pcm', weekday, 'nm', 'Nachmittag', 'consultation', '16:00', '18:00', 3);
+    }
+
+    // Aerzte
+    push('doctor', 'blk-doc', weekday, 'fr', 'Sprechstunde', 'consultation', '08:00', '11:00', 1);
+    push(
+      'doctor',
+      'blk-doc',
+      weekday,
+      'iv',
+      'Infekt-/Videosprechstunde',
+      'consultation',
+      '11:00',
+      '13:00',
+      2,
+    );
+    push('doctor', 'blk-doc', weekday, 'id', 'Innendienst', 'backoffice', '13:00', '16:00', 3);
+    if (full) {
+      push('doctor', 'blk-doc', weekday, 'nm', 'Nachmittag', 'consultation', '16:00', '18:00', 4);
     }
   }
   return blocks;
@@ -98,46 +134,47 @@ const SEED_SKILLS = [
 
 interface SeedArea {
   id: string;
-  plan: 'doctor' | 'mfa';
+  plan: PlanKind;
   name: string;
   description: string;
-  kind: 'room' | 'service' | 'office' | 'homeoffice' | 'housecall';
+  kind: AreaKind;
   isCritical: boolean;
   minStaff: number;
   maxStaff: number | null;
-  requiresHomeoffice: boolean;
+  location: AreaLocation;
   rotationMinPerWeek: number | null;
+  followUpAreaId: string | null;
   icon: string;
   color: string;
   sortOrder: number;
   requiredSkills: readonly string[];
-  /** Welche Blocktypen der Bereich bedient. */
-  blockKinds: readonly ('consultation' | 'backoffice')[];
-  /** Nur Vormittagsbloecke - fuer das Labor. */
-  morningsOnly?: boolean;
-  /** Abweichende Mindestbesetzung im Innendienst. */
-  backofficeMinStaff?: number;
+  /** Welche Block-Kennungen der Gruppe der Bereich bedient. */
+  blockTags: readonly string[];
+  /** Abweichende Mindestbesetzung je Block-Kennung. */
+  minStaffByTag?: Readonly<Record<string, number>>;
 }
 
 const SEED_AREAS: readonly SeedArea[] = [
+  // ------------------------------------------------------------- MFA --
   {
     id: 'wa-anmeldung',
     plan: 'mfa',
     name: 'Anmeldung',
-    description: 'Patientenempfang, Telefon und Terminvergabe',
+    description: 'Patientenempfang, Terminvergabe, Praxis-App',
     kind: 'service',
     isCritical: true,
     minStaff: 2,
     maxStaff: 3,
-    requiresHomeoffice: false,
+    location: 'practice',
     rotationMinPerWeek: null,
+    followUpAreaId: null,
     icon: '📋',
     color: '#3b82f6',
     sortOrder: 1,
     requiredSkills: [],
-    blockKinds: ['consultation', 'backoffice'],
-    // Im Innendienst reicht eine Person am Telefon.
-    backofficeMinStaff: 1,
+    blockTags: ['vm', 'id', 'nm'],
+    // Im Innendienst reicht eine Person.
+    minStaffByTag: { id: 1 },
   },
   {
     id: 'wa-labor',
@@ -148,50 +185,106 @@ const SEED_AREAS: readonly SeedArea[] = [
     isCritical: true,
     minStaff: 1,
     maxStaff: 2,
-    requiresHomeoffice: false,
+    location: 'practice',
     // Jede MFA soll mindestens einmal pro Woche ins Labor, damit sie es
     // nicht verlernt. Pro Person in der Einsatz-Matrix uebersteuerbar.
     rotationMinPerWeek: 1,
+    followUpAreaId: null,
     icon: '🔬',
     color: '#8b5cf6',
     sortOrder: 2,
     requiredSkills: ['skl-blutentnahme'],
-    blockKinds: ['consultation'],
-    morningsOnly: true,
+    blockTags: ['vm'],
   },
   {
-    id: 'wa-notfall',
+    id: 'wa-telefon',
     plan: 'mfa',
-    name: 'Notfallzimmer',
-    description: 'Akutversorgung, EKG, Wundversorgung',
+    name: 'Telefon / E-Mail / Fax',
+    description: 'Concierge: Telefon, E-Mail-Postfach und Faxe - immer dieselbe Person',
     kind: 'service',
     isCritical: true,
     minStaff: 1,
-    maxStaff: 2,
-    requiresHomeoffice: false,
+    maxStaff: 1,
+    location: 'any',
     rotationMinPerWeek: null,
-    icon: '🚑',
-    color: '#ef4444',
+    followUpAreaId: null,
+    icon: '📞',
+    color: '#06b6d4',
     sortOrder: 3,
     requiredSkills: [],
-    blockKinds: ['consultation'],
+    blockTags: ['vm', 'id', 'nm'],
   },
   {
     id: 'wa-backoffice',
     plan: 'mfa',
     name: 'Backoffice',
-    description: 'Abrechnung, Rezepte, Befunde, Post',
+    description: 'Abrechnung, Rezepte, Medikations- und Impfpläne, Post',
     kind: 'office',
     isCritical: false,
     minStaff: 0,
     maxStaff: null,
-    requiresHomeoffice: false,
+    location: 'any',
     rotationMinPerWeek: null,
+    followUpAreaId: null,
     icon: '🗂️',
     color: '#f59e0b',
     sortOrder: 4,
     requiredSkills: [],
-    blockKinds: ['backoffice'],
+    blockTags: ['id'],
+  },
+  {
+    id: 'wa-hausbesuche',
+    plan: 'mfa',
+    name: 'VERAH-Hausbesuche',
+    description: 'Hausbesuche - setzt die VERAH-Qualifikation zwingend voraus',
+    kind: 'housecall',
+    isCritical: false,
+    minStaff: 0,
+    maxStaff: 1,
+    location: 'practice',
+    rotationMinPerWeek: null,
+    followUpAreaId: null,
+    icon: '🩺',
+    color: '#10b981',
+    sortOrder: 5,
+    requiredSkills: ['skl-verah'],
+    blockTags: ['id'],
+  },
+  {
+    id: 'wa-hausbesuche-schreiben',
+    plan: 'mfa',
+    name: 'Hausbesuche schreiben',
+    description: 'Dokumentation der Hausbesuche vom Vortag',
+    kind: 'office',
+    isCritical: false,
+    minStaff: 0,
+    maxStaff: 1,
+    location: 'any',
+    rotationMinPerWeek: null,
+    followUpAreaId: 'wa-hausbesuche',
+    icon: '✍️',
+    color: '#84cc16',
+    sortOrder: 6,
+    requiredSkills: [],
+    blockTags: ['id'],
+  },
+  {
+    id: 'wa-mfa-sprechstunde',
+    plan: 'mfa',
+    name: 'MFA-Sprechstunde',
+    description: 'Eigene Sprechstunde der MFA, z. B. montags ab 15 Uhr',
+    kind: 'room',
+    isCritical: false,
+    minStaff: 0,
+    maxStaff: 1,
+    location: 'practice',
+    rotationMinPerWeek: null,
+    followUpAreaId: null,
+    icon: '🧑‍⚕️',
+    color: '#ec4899',
+    sortOrder: 7,
+    requiredSkills: [],
+    blockTags: ['nm'],
   },
   {
     id: 'wa-homeoffice',
@@ -202,30 +295,126 @@ const SEED_AREAS: readonly SeedArea[] = [
     isCritical: false,
     minStaff: 0,
     maxStaff: null,
-    requiresHomeoffice: true,
+    location: 'home',
     rotationMinPerWeek: null,
+    followUpAreaId: null,
     icon: '🏠',
-    color: '#10b981',
-    sortOrder: 5,
+    color: '#64748b',
+    sortOrder: 8,
     requiredSkills: [],
-    blockKinds: ['backoffice'],
+    blockTags: ['id'],
+  },
+
+  // ------------------------------------------------------------- PCM --
+  {
+    id: 'wa-pcm-sprechstunde',
+    plan: 'pcm',
+    name: 'PCM-Sprechstunde',
+    description: 'Eigene Sprechstunde der Primary Care Managerin',
+    kind: 'room',
+    isCritical: false,
+    minStaff: 0,
+    maxStaff: 1,
+    location: 'practice',
+    rotationMinPerWeek: null,
+    followUpAreaId: null,
+    icon: '🩺',
+    color: '#8b5cf6',
+    sortOrder: 1,
+    requiredSkills: [],
+    blockTags: ['vm', 'nm'],
   },
   {
-    id: 'wa-hausbesuche',
-    plan: 'mfa',
-    name: 'Hausbesuche',
-    description: 'VERAH-Hausbesuche - setzt die VERAH-Qualifikation zwingend voraus',
+    id: 'wa-pcm-hausbesuche',
+    plan: 'pcm',
+    name: 'PCM-Hausbesuche',
+    description: 'Hausbesuche und Heimvisiten der PCM',
     kind: 'housecall',
     isCritical: false,
     minStaff: 0,
     maxStaff: 1,
-    requiresHomeoffice: false,
+    location: 'practice',
     rotationMinPerWeek: null,
-    icon: '🩺',
+    followUpAreaId: null,
+    icon: '🚑',
     color: '#06b6d4',
+    sortOrder: 2,
+    requiredSkills: [],
+    blockTags: ['vm', 'id'],
+  },
+  {
+    id: 'wa-pcm-innendienst',
+    plan: 'pcm',
+    name: 'PCM-Innendienst',
+    description: 'Fallmanagement, Dokumentation, Koordination',
+    kind: 'office',
+    isCritical: false,
+    minStaff: 0,
+    maxStaff: 1,
+    location: 'any',
+    rotationMinPerWeek: null,
+    followUpAreaId: null,
+    icon: '🗂️',
+    color: '#f59e0b',
+    sortOrder: 3,
+    requiredSkills: [],
+    blockTags: ['id'],
+  },
+
+  // ----------------------------------------------------------- Aerzte --
+  {
+    id: 'wa-infekt',
+    plan: 'doctor',
+    name: 'Infektsprechstunde',
+    description: 'Akut- und Infektsprechstunde 11-13 Uhr',
+    kind: 'room',
+    isCritical: true,
+    minStaff: 1,
+    maxStaff: 2,
+    location: 'practice',
+    rotationMinPerWeek: null,
+    followUpAreaId: null,
+    icon: '🤧',
+    color: '#ef4444',
+    sortOrder: 5,
+    requiredSkills: [],
+    blockTags: ['iv'],
+  },
+  {
+    id: 'wa-video',
+    plan: 'doctor',
+    name: 'Videosprechstunde',
+    description: 'Parallel zur Infektsprechstunde 11-13 Uhr',
+    kind: 'service',
+    isCritical: false,
+    minStaff: 0,
+    maxStaff: 1,
+    location: 'any',
+    rotationMinPerWeek: null,
+    followUpAreaId: null,
+    icon: '📹',
+    color: '#0ea5e9',
     sortOrder: 6,
-    requiredSkills: ['skl-verah'],
-    blockKinds: ['backoffice'],
+    requiredSkills: [],
+    blockTags: ['iv'],
+  },
+  {
+    id: 'wa-arzt-innendienst',
+    plan: 'doctor',
+    name: 'Innendienst / Hausbesuche',
+    description: 'Befunde, Briefe, Hausbesuche der Ärzte',
+    kind: 'office',
+    isCritical: false,
+    minStaff: 0,
+    maxStaff: null,
+    location: 'any',
+    rotationMinPerWeek: null,
+    followUpAreaId: null,
+    icon: '🗂️',
+    color: '#f59e0b',
+    sortOrder: 7,
+    requiredSkills: [],
+    blockTags: ['id'],
   },
 ];
 
@@ -238,42 +427,17 @@ const SEED_ROOMS: readonly SeedArea[] = [1, 2, 3, 4].map((number) => ({
   kind: 'room',
   isCritical: false,
   minStaff: 0,
-  // Ein Zimmer, eine Sprechstunde. Auch die PCM belegt genau eines davon.
+  // Ein Zimmer, eine Sprechstunde.
   maxStaff: 1,
-  requiresHomeoffice: false,
+  location: 'practice',
   rotationMinPerWeek: null,
+  followUpAreaId: null,
   icon: '🚪',
   color: ['#6366f1', '#8b5cf6', '#ec4899', '#f97316'][number - 1] ?? '#6366f1',
   sortOrder: number,
   requiredSkills: [],
-  blockKinds: ['consultation'],
+  blockTags: ['fr', 'nm'],
 }));
-
-/**
- * Gewichte des Schedulers. Bewusst in der Datenbank statt als Zahlenliterale
- * im Code: in v1 standen 10000/5000/20/-50 mitten in der Planungsschleife und
- * waren ohne Neubau der Anwendung nicht anpassbar.
- * Negative Kosten sind erwuenscht, positive unerwuenscht.
- */
-const DEFAULT_WEIGHTS = {
-  /** Treue zur Musterwoche - der staerkste Zug, damit Wochen stabil bleiben. */
-  templateMatch: -400,
-  preferencePreferred: -40,
-  preferenceNeutral: 0,
-  preferenceDislike: 60,
-  /** Sehr teuer, aber nicht unmoeglich - im Notfall geht es trotzdem. */
-  preferenceNever: 600,
-  /** Offene Pflichtrotation, z. B. "diese Woche noch nicht im Labor gewesen". */
-  rotationUnmet: -300,
-  /** Beantragter, noch nicht genehmigter Urlaub an dem Tag. */
-  absenceRequested: 250,
-  /** Ausgleich ueber die letzten Wochen. */
-  fairness: 15,
-  /** Wer noch Sollstunden offen hat, wird bevorzugt eingeteilt. */
-  hoursDeficit: -8,
-  /** Optionale Sitze erst fuellen, wenn alle Pflichtsitze besetzt sind. */
-  optionalSeat: 120,
-};
 
 export function isSeeded(db: Db): boolean {
   const row = db.prepare('SELECT COUNT(*) AS n FROM day_blocks').get() as { n: number };
@@ -285,19 +449,19 @@ export function seedDatabase(db: Db): void {
   const blocks = buildDayBlocks();
 
   const insertBlock = db.prepare(
-    `INSERT INTO day_blocks (id, weekday, label, kind, start_min, end_min, sort_order)
-     VALUES (@id, @weekday, @label, @kind, @startMin, @endMin, @sortOrder)`,
+    `INSERT INTO day_blocks (id, plan, weekday, label, kind, start_min, end_min, sort_order)
+     VALUES (@id, @plan, @weekday, @label, @kind, @startMin, @endMin, @sortOrder)`,
   );
   const insertSkill = db.prepare(
     `INSERT INTO skills (id, name, category, description) VALUES (?, ?, ?, ?)`,
   );
   const insertArea = db.prepare(
     `INSERT INTO work_areas
-       (id, plan, name, description, kind, is_critical, min_staff, max_staff,
-        requires_homeoffice, rotation_min_per_week, icon, color, sort_order)
+       (id, plan, name, description, kind, is_critical, min_staff, max_staff, location,
+        rotation_min_per_week, follow_up_area_id, icon, color, sort_order)
      VALUES
-       (@id, @plan, @name, @description, @kind, @isCritical, @minStaff, @maxStaff,
-        @requiresHomeoffice, @rotationMinPerWeek, @icon, @color, @sortOrder)`,
+       (@id, @plan, @name, @description, @kind, @isCritical, @minStaff, @maxStaff, @location,
+        @rotationMinPerWeek, @followUpAreaId, @icon, @color, @sortOrder)`,
   );
   const insertAreaSkill = db.prepare(
     `INSERT INTO work_area_skills (work_area_id, skill_id) VALUES (?, ?)`,
@@ -308,39 +472,52 @@ export function seedDatabase(db: Db): void {
   const insertSetting = db.prepare(`INSERT INTO settings (key, value) VALUES (?, ?)`);
 
   const run = db.transaction(() => {
-    for (const block of blocks) insertBlock.run(block);
+    for (const block of blocks) {
+      // Bewusst nur die Felder, die im SQL vorkommen: node:sqlite lehnt
+      // unbekannte benannte Parameter ab - das faengt Tippfehler auf.
+      insertBlock.run({
+        id: block.id,
+        plan: block.plan,
+        weekday: block.weekday,
+        label: block.label,
+        kind: block.kind,
+        startMin: block.startMin,
+        endMin: block.endMin,
+        sortOrder: block.sortOrder,
+      });
+    }
     for (const [id, name, category, description] of SEED_SKILLS) {
       insertSkill.run(id, name, category, description);
     }
 
-    for (const area of [...SEED_AREAS, ...SEED_ROOMS]) {
-      // Bewusst nur die Felder, die im SQL vorkommen: node:sqlite lehnt
-      // unbekannte benannte Parameter ab - das faengt Tippfehler auf.
+    // Folgeaufgaben verweisen auf andere Bereiche - die muessen zuerst da sein.
+    const ordered = [...SEED_ROOMS, ...SEED_AREAS].sort(
+      (a, b) => Number(a.followUpAreaId !== null) - Number(b.followUpAreaId !== null),
+    );
+    for (const area of ordered) {
       insertArea.run({
         id: area.id,
         plan: area.plan,
         name: area.name,
         description: area.description,
         kind: area.kind,
+        isCritical: area.isCritical ? 1 : 0,
+        minStaff: area.minStaff,
+        maxStaff: area.maxStaff ?? null,
+        location: area.location,
+        rotationMinPerWeek: area.rotationMinPerWeek ?? null,
+        followUpAreaId: area.followUpAreaId ?? null,
         icon: area.icon,
         color: area.color,
         sortOrder: area.sortOrder,
-        minStaff: area.minStaff,
-        isCritical: area.isCritical ? 1 : 0,
-        requiresHomeoffice: area.requiresHomeoffice ? 1 : 0,
-        rotationMinPerWeek: area.rotationMinPerWeek ?? null,
-        maxStaff: area.maxStaff ?? null,
       });
       for (const skillId of area.requiredSkills) {
         insertAreaSkill.run(area.id, skillId);
       }
       for (const block of blocks) {
-        if (block.kind === 'closed') continue;
-        if (!area.blockKinds.includes(block.kind)) continue;
-        // Das Labor laeuft nur vormittags - sortOrder 1 ist der erste Block des Tages.
-        if (area.morningsOnly && block.sortOrder !== 1) continue;
-        const override = block.kind === 'backoffice' ? (area.backofficeMinStaff ?? null) : null;
-        insertAreaBlock.run(area.id, block.id, override);
+        if (block.plan !== area.plan || block.kind === 'closed') continue;
+        if (!area.blockTags.includes(block.tag)) continue;
+        insertAreaBlock.run(area.id, block.id, area.minStaffByTag?.[block.tag] ?? null);
       }
     }
 

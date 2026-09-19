@@ -151,9 +151,9 @@ function EmployeeRow({
             style={{ backgroundColor: employee.color }}
           />
           <span className="font-medium">{fullName(employee)}</span>
-          {employee.isPcm && (
+          {employee.staffType === 'pcm' && (
             <span
-              title="Primary Care Managerin – hält eigene Sprechstunde"
+              title="Primary Care Managerin – eigene Sprechstunde und Hausbesuche"
               className="inline-flex items-center gap-1 rounded-full bg-purple-100 px-2 py-0.5 text-xs font-medium text-purple-700 dark:bg-purple-950 dark:text-purple-300"
             >
               <Stethoscope className="size-3" /> PCM
@@ -222,8 +222,12 @@ function DayCell({ employee, day }: { employee: Employee; day: PracticeWeekday }
     return <td className="px-2 py-3 text-center text-slate-300 dark:text-slate-700">–</td>;
   }
   return (
-    <td className="tabular px-2 py-3 text-center text-xs whitespace-nowrap text-slate-600 dark:text-slate-400">
+    <td
+      className="tabular px-2 py-3 text-center text-xs whitespace-nowrap text-slate-600 dark:text-slate-400"
+      title={work.location === 'home' ? 'Homeoffice-Tag' : undefined}
+    >
       {formatHHMM(work.startMin)}–{formatHHMM(work.endMin)}
+      {work.location === 'home' && <Home className="ml-1 inline size-3 text-emerald-600" />}
     </td>
   );
 }

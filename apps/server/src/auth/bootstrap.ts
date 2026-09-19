@@ -1,4 +1,4 @@
-import { existsSync, unlinkSync } from 'node:fs';
+import { existsSync, readdirSync, unlinkSync } from 'node:fs';
 import path from 'node:path';
 import { randomInt, randomUUID } from 'node:crypto';
 import type { Db } from '../db/index.js';
@@ -51,6 +51,23 @@ export async function createFirstAdmin(db: Db, input: FirstAdminInput): Promise<
 /** Datei, mit der sich ein ausgesperrter Zugang wiederherstellen laesst. */
 export const RECOVERY_MARKER = 'ZUGANG-ZURUECKSETZEN.txt';
 
+/** Umgebungsvariable, die dasselbe ausloest - fuer `start-server.bat reset`. */
+export const RECOVERY_ENV = 'HAEPPI_RESET_ACCESS';
+
+/**
+ * Alle Dateien im Datenverzeichnis, die als Marker gemeint sind. Windows
+ * blendet Endungen aus - aus "ZUGANG-ZURUECKSETZEN.txt" wird beim Anlegen
+ * im Explorer schnell "ZUGANG-ZURUECKSETZEN.txt.txt" oder "zugang-zuruecksetzen".
+ * Das soll nicht daran scheitern.
+ */
+export function findRecoveryMarkers(dataDir: string): string[] {
+  if (!existsSync(dataDir)) return [];
+  const stem = RECOVERY_MARKER.replace(/\.txt$/i, '').toLowerCase();
+  return readdirSync(dataDir)
+    .filter((name) => name.toLowerCase().startsWith(stem))
+    .map((name) => path.join(dataDir, name));
+}
+
 export interface RecoveryResult {
   readonly performed: boolean;
   readonly username?: string;
@@ -67,9 +84,13 @@ export interface RecoveryResult {
  *
  * Die Marker-Datei wird sofort geloescht, damit der Weg nicht offen bleibt.
  */
-export async function handleRecoveryMarker(db: Db, dataDir: string): Promise<RecoveryResult> {
-  const marker = path.join(dataDir, RECOVERY_MARKER);
-  if (!existsSync(marker)) return { performed: false };
+export async function handleRecoveryMarker(
+  db: Db,
+  dataDir: string,
+  force = false,
+): Promise<RecoveryResult> {
+  const markers = findRecoveryMarkers(dataDir);
+  if (markers.length === 0 && !force) return { performed: false };
 
   const password = generatePassword();
   const hash = await hashPassword(password);
@@ -102,7 +123,7 @@ export async function handleRecoveryMarker(db: Db, dataDir: string): Promise<Rec
      VALUES (NULL, 'recovery', 'user', NULL, 'Zugang über Marker-Datei zurückgesetzt')`,
   ).run();
 
-  unlinkSync(marker);
+  for (const marker of markers) unlinkSync(marker);
   return { performed: true, username, password };
 }
 

@@ -1,13 +1,17 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import type { AbsenceType, VacationBalance } from '@haeppi/shared';
+import type { AbsenceType, ClosurePlan, VacationBalance } from '@haeppi/shared';
 import {
+  addDays,
   assertIsoDate,
+  assessAbsence,
   calculateVacationBalance,
   closedDateSet,
   consumesVacationDays,
+  planClosure,
 } from '@haeppi/shared';
 import { requireAdmin, requireAuth } from '../../auth/middleware.js';
+import type { Db } from '../../db/index.js';
 import {
   countOpenRequests,
   createAbsence,
@@ -17,19 +21,28 @@ import {
   deleteAbsence,
   deleteClosure,
   deleteRecurringAbsence,
+  dutyHistory,
   getAbsence,
+  getClosure,
   getVacationAccount,
   listAbsences,
   listAbsencesOfEmployee,
+  listClosureDuties,
   listClosures,
   listRecurringAbsences,
+  replaceClosureDuties,
   setVacationAccount,
+  updateClosure,
 } from '../../db/repositories/absences.js';
-import { getEmployee } from '../../db/repositories/employees.js';
+import { getEmployee, listEmployees } from '../../db/repositories/employees.js';
+import { listWorkAreas } from '../../db/repositories/workAreas.js';
+import { listDayBlocks } from '../../db/repositories/dayBlocks.js';
 import { readPracticeSettings } from '../../db/repositories/settings.js';
 import { badRequest, notFound, parseBody, pathParam } from '../http.js';
 import { serializeAbsences } from '../serializers/absenceSerializer.js';
+import { closureSchema } from '../schemas.js';
 import { writeAudit } from '../audit.js';
+import { absenceSpansFor, closedDatesFor, proposeReplanForAbsence } from '../planning.js';
 
 const ISO_DATE = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Erwartet ein Datum im Format JJJJ-MM-TT');
 
@@ -49,18 +62,6 @@ const absenceSchema = z
   .refine((input) => input.halfDay === null || input.startDate === input.endDate, {
     message: 'Ein halber Tag ist nur bei eintägigen Abwesenheiten möglich.',
     path: ['halfDay'],
-  });
-
-const closureSchema = z
-  .object({
-    startDate: ISO_DATE,
-    endDate: ISO_DATE,
-    description: z.string().max(200).default(''),
-    skeletonStaff: z.number().int().min(0).max(20).default(1),
-  })
-  .refine((input) => input.endDate >= input.startDate, {
-    message: 'Das Ende darf nicht vor dem Beginn liegen.',
-    path: ['endDate'],
   });
 
 const recurringSchema = z.object({
@@ -89,6 +90,35 @@ export function absencesRouter(): Router {
     res.json({ count: countOpenRequests(req.db) });
   });
 
+  /**
+   * Antragspruefung: wird es an den Tagen eng? Fuer die eigene Person
+   * und fuer die Praxisleitung. Kolleginnen sehen dabei nur Kopfzahlen,
+   * keine Gruende.
+   */
+  router.get('/check', requireAuth, (req, res) => {
+    const employeeId = String(req.query.employeeId ?? '');
+    const startDate = assertIsoDate(String(req.query.startDate ?? ''));
+    const endDate = assertIsoDate(String(req.query.endDate ?? ''));
+    const user = req.user!;
+    if (user.role !== 'admin' && user.employeeId !== employeeId) {
+      throw badRequest('Die Prüfung gibt es nur für die eigene Person.');
+    }
+    if (endDate < startDate) throw badRequest('Das Ende darf nicht vor dem Beginn liegen.');
+
+    const result = assessAbsence({
+      employeeId,
+      startDate,
+      endDate,
+      employees: listEmployees(req.db),
+      // Inklusive Berufsschultage - die fehlen sonst in der Kopfzahl.
+      absences: absenceSpansFor(req.db, startDate, endDate),
+      workAreas: listWorkAreas(req.db),
+      dayBlocks: listDayBlocks(req.db),
+      closedDates: closedDatesFor(req.db, startDate, endDate),
+    });
+    res.json({ check: result });
+  });
+
   router.post('/', requireAuth, (req, res) => {
     const input = parseBody(absenceSchema, req.body);
     const user = req.user!;
@@ -114,7 +144,11 @@ export function absencesRouter(): Router {
 
     const absence = createAbsence(req.db, { ...input, status }, user.userId);
     writeAudit(req.db, user.userId, 'create', 'absence', absence.id, input.type);
-    res.status(201).json({ absence });
+
+    // Der Plan aendert sich nicht von selbst: fuer betroffene, schon
+    // geplante Wochen entsteht ein Vorschlag fuer die Praxisleitung.
+    const proposals = proposeReplanForAbsence(req.db, absence, user.userId);
+    res.status(201).json({ absence, proposals });
   });
 
   router.post('/:id/decide', requireAdmin, (req, res) => {
@@ -122,7 +156,8 @@ export function absencesRouter(): Router {
     const absence = decideAbsence(req.db, pathParam(req, 'id'), status, req.user!.userId);
     if (!absence) throw notFound('Diese Abwesenheit gibt es nicht.');
     writeAudit(req.db, req.user!.userId, status, 'absence', absence.id);
-    res.json({ absence });
+    const proposals = proposeReplanForAbsence(req.db, absence, req.user!.userId);
+    res.json({ absence, proposals });
   });
 
   router.delete('/:id', requireAuth, (req, res) => {
@@ -194,6 +229,21 @@ export function absencesRouter(): Router {
   return router;
 }
 
+/** Rechnet die Notbesetzung einer Schliessung aus dem aktuellen Datenbestand. */
+function computeClosurePlan(db: Db, closureId: string): ClosurePlan | null {
+  const closure = getClosure(db, closureId);
+  if (!closure) return null;
+  const settings = readPracticeSettings(db);
+  const year = Number(closure.startDate.slice(0, 4));
+  return planClosure({
+    closure,
+    employees: listEmployees(db),
+    absences: listAbsences(db, addDays(closure.startDate, -1), addDays(closure.endDate, 1)),
+    dutyHistory: dutyHistory(db, closure.startDate),
+    closedDates: closedDateSet(settings.holidays, year, year + 1),
+  });
+}
+
 export function closuresRouter(): Router {
   const router = Router();
 
@@ -207,9 +257,71 @@ export function closuresRouter(): Router {
     res.status(201).json({ closure });
   });
 
+  router.put('/:id', requireAdmin, (req, res) => {
+    const closure = updateClosure(req.db, pathParam(req, 'id'), parseBody(closureSchema, req.body));
+    if (!closure) throw notFound('Schließzeit nicht gefunden.');
+    writeAudit(req.db, req.user!.userId, 'update', 'closure', closure.id);
+    res.json({ closure });
+  });
+
   router.delete('/:id', requireAdmin, (req, res) => {
     if (!deleteClosure(req.db, pathParam(req, 'id'))) throw notFound('Schließzeit nicht gefunden.');
     res.status(204).end();
+  });
+
+  router.get('/:id/duties', requireAuth, (req, res) => {
+    if (!getClosure(req.db, pathParam(req, 'id'))) throw notFound('Schließzeit nicht gefunden.');
+    res.json({ duties: listClosureDuties(req.db, pathParam(req, 'id')) });
+  });
+
+  /**
+   * Notbesetzung und Urlaub verteilen. Mit `dryRun` nur die Vorschau; sonst
+   * werden Notdienste gespeichert, offene Urlaubswuensche im Zeitraum
+   * genehmigt und fuer alle uebrigen Tage Urlaub eingetragen.
+   */
+  router.post('/:id/plan', requireAdmin, (req, res) => {
+    const id = pathParam(req, 'id');
+    const dryRun = req.body?.dryRun === true;
+    const closure = getClosure(req.db, id);
+    if (!closure) throw notFound('Schließzeit nicht gefunden.');
+
+    if (dryRun) {
+      res.json({ plan: computeClosurePlan(req.db, id), applied: false });
+      return;
+    }
+
+    const userId = req.user!.userId;
+    const plan = req.db.transaction(() => {
+      // Wuensche zuerst genehmigen, damit sie in der Verteilung als fest gelten.
+      const requests = listAbsences(req.db, closure.startDate, closure.endDate).filter(
+        (absence) => absence.status === 'requested' && absence.type === 'vacation',
+      );
+      for (const request of requests) decideAbsence(req.db, request.id, 'approved', userId);
+
+      const computed = computeClosurePlan(req.db, id);
+      if (!computed) throw notFound('Schließzeit nicht gefunden.');
+
+      replaceClosureDuties(req.db, id, computed.duties);
+      for (const vacation of computed.vacations) {
+        createAbsence(
+          req.db,
+          {
+            employeeId: vacation.employeeId,
+            startDate: vacation.startDate,
+            endDate: vacation.endDate,
+            type: 'vacation',
+            status: 'approved',
+            halfDay: null,
+            note: `Praxisschließung${closure.description ? `: ${closure.description}` : ''}`,
+          },
+          userId,
+        );
+      }
+      return computed;
+    })();
+
+    writeAudit(req.db, userId, 'plan', 'closure', id, `${plan.duties.length} Notdienste`);
+    res.json({ plan, applied: true });
   });
 
   return router;

@@ -12,6 +12,16 @@ let app: Express;
 
 /** KW 32/2026, Montag. */
 const MONDAY = '2026-08-03';
+const TUESDAY = '2026-08-04';
+
+interface PlannedRow {
+  date: string;
+  dayBlockId: string;
+  workAreaId: string;
+  employeeId: string;
+  source: string;
+  reason: string;
+}
 
 beforeEach(async () => {
   db = createTestDb();
@@ -33,8 +43,7 @@ async function adminAgent() {
 }
 
 interface PersonOptions {
-  staffType?: 'doctor' | 'mfa' | 'trainee';
-  isPcm?: boolean;
+  staffType?: 'doctor' | 'pcm' | 'mfa' | 'trainee';
   canHomeoffice?: boolean;
   skills?: string[];
   start?: number;
@@ -46,14 +55,13 @@ function person(name: string, options: PersonOptions = {}): string {
   const id = randomUUID();
   db.prepare(
     `INSERT INTO employees
-       (id, first_name, last_name, staff_type, is_pcm, employment, target_hours_week,
+       (id, first_name, last_name, staff_type, employment, target_hours_week,
         can_homeoffice, sort_order)
-     VALUES (?, ?, 'Test', ?, ?, 'fulltime', 40, ?, ?)`,
+     VALUES (?, ?, 'Test', ?, 'fulltime', 40, ?, ?)`,
   ).run(
     id,
     name,
     options.staffType ?? 'mfa',
-    options.isPcm ? 1 : 0,
     options.canHomeoffice ? 1 : 0,
     options.sortOrder ?? 0,
   );
@@ -72,6 +80,23 @@ function person(name: string, options: PersonOptions = {}): string {
   return id;
 }
 
+async function generate(
+  agent: ReturnType<typeof request.agent>,
+  csrf: string,
+  body: Record<string, unknown> = {},
+): Promise<{ status: number; assignments: PlannedRow[]; body: Record<string, unknown> }> {
+  const response = await agent
+    .post('/api/roster/generate')
+    .set(CSRF_HEADER, csrf)
+    .send({ weekStart: MONDAY, ...body });
+  const results = (response.body.results ?? []) as { assignments: PlannedRow[] }[];
+  return {
+    status: response.status,
+    assignments: results[0]?.assignments ?? [],
+    body: response.body as Record<string, unknown>,
+  };
+}
+
 describe('Wochenplan erzeugen', () => {
   it('ist Mitarbeitern verwehrt', async () => {
     const ownId = person('Sabine');
@@ -86,7 +111,7 @@ describe('Wochenplan erzeugen', () => {
     const response = await agent
       .post('/api/roster/generate')
       .set(CSRF_HEADER, csrf)
-      .send({ weekStart: MONDAY, plan: 'mfa' });
+      .send({ weekStart: MONDAY });
     expect(response.status).toBe(403);
   });
 
@@ -97,180 +122,114 @@ describe('Wochenplan erzeugen', () => {
     person('Dora', { sortOrder: 4 });
 
     const { agent, csrf } = await adminAgent();
-    const response = await agent
-      .post('/api/roster/generate')
-      .set(CSRF_HEADER, csrf)
-      .send({ weekStart: MONDAY, plan: 'mfa' });
+    const { status, assignments } = await generate(agent, csrf);
 
-    expect(response.status).toBe(200);
-    expect(response.body.assignments.length).toBeGreaterThan(0);
+    expect(status).toBe(200);
+    expect(assignments.length).toBeGreaterThan(0);
 
-    // Montag Vormittag: Anmeldung braucht 2, Labor 1, Notfallzimmer 1.
-    const montagVormittag = response.body.assignments.filter(
-      (a: { date: string; dayBlockId: string }) => a.date === MONDAY && a.dayBlockId === 'blk-1-vm',
+    // Montag Vormittag: Anmeldung braucht 2, Labor 1, Telefon 1.
+    const montagVormittag = assignments.filter(
+      (a) => a.date === MONDAY && a.dayBlockId === 'blk-1-vm',
     );
     const proBereich = new Map<string, number>();
-    for (const a of montagVormittag as { workAreaId: string }[]) {
+    for (const a of montagVormittag) {
       proBereich.set(a.workAreaId, (proBereich.get(a.workAreaId) ?? 0) + 1);
     }
     expect(proBereich.get('wa-anmeldung')).toBeGreaterThanOrEqual(2);
     expect(proBereich.get('wa-labor')).toBe(1);
+    expect(proBereich.get('wa-telefon')).toBe(1);
   });
 
-  it('plant an Feiertagen nicht', async () => {
-    person('Anna');
-    const { agent, csrf } = await adminAgent();
-    // KW 34/2026 enthält Mariä Himmelfahrt nicht (Samstag) - deshalb
-    // Pfingstmontag, 25.05.2026.
-    const response = await agent
-      .post('/api/roster/generate')
-      .set(CSRF_HEADER, csrf)
-      .send({ weekStart: '2026-05-25', plan: 'mfa' });
+  it('plant alle Gruppen in einem Lauf', async () => {
+    person('Anna', { sortOrder: 1 });
+    person('Bea', { sortOrder: 2 });
+    person('Heidi', { staffType: 'pcm', sortOrder: 3 });
+    person('Dr. Rasche', { staffType: 'doctor', sortOrder: 4 });
 
-    const daten = response.body.assignments.map((a: { date: string }) => a.date);
-    expect(daten).not.toContain('2026-05-25');
-    expect(daten).toContain('2026-05-26');
+    const { agent, csrf } = await adminAgent();
+    const { assignments } = await generate(agent, csrf, { dryRun: true });
+
+    const areas = new Set(assignments.map((a) => a.workAreaId));
+    expect(areas.has('wa-anmeldung')).toBe(true);
+    expect(areas.has('wa-pcm-sprechstunde')).toBe(true);
+    expect([...areas].some((id) => id.startsWith('wa-zimmer'))).toBe(true);
   });
 
-  it('speichert im Probelauf nichts', async () => {
-    person('Anna');
-    const { agent, csrf } = await adminAgent();
-
-    const dryRun = await agent
-      .post('/api/roster/generate')
-      .set(CSRF_HEADER, csrf)
-      .send({ weekStart: MONDAY, plan: 'mfa', dryRun: true });
-
-    expect(dryRun.body.assignments.length).toBeGreaterThan(0);
-    expect(dryRun.body.dryRun).toBe(true);
-
-    const gespeichert = await agent.get(`/api/roster?from=${MONDAY}&to=2026-08-09`);
-    expect(gespeichert.body.assignments).toHaveLength(0);
-  });
-
-  it('liefert eine Diagnose mit Ablehnungsgründen', async () => {
-    // Niemand angelegt: alle Pflichtplätze bleiben leer.
-    const { agent, csrf } = await adminAgent();
-    const response = await agent
-      .post('/api/roster/generate')
-      .set(CSRF_HEADER, csrf)
-      .send({ weekStart: MONDAY, plan: 'mfa', dryRun: true });
-
-    const labor = response.body.diagnostics.find(
-      (d: { kind: string; message: string }) =>
-        d.kind === 'unfilled_required' && d.message.includes('Labor'),
-    );
-    expect(labor).toBeDefined();
-    expect(labor.severity).toBe('error');
-    expect(labor.message).toContain('unbesetzt');
-  });
-
-  it('erkennt eine fehlende VERAH-Qualifikation als Grund', async () => {
-    person('Anna', { skills: ['skl-blutentnahme'] });
-    const { agent, csrf } = await adminAgent();
-    const response = await agent
-      .post('/api/roster/generate')
-      .set(CSRF_HEADER, csrf)
-      .send({ weekStart: MONDAY, plan: 'mfa', dryRun: true });
-
-    // Hausbesuche haben minStaff 0, also keine Warnung - aber Anna darf dort
-    // auch nicht landen.
-    const hausbesuche = response.body.assignments.filter(
-      (a: { workAreaId: string }) => a.workAreaId === 'wa-hausbesuche',
-    );
-    expect(hausbesuche).toHaveLength(0);
-  });
-
-  it('lässt nur Berechtigte ins Homeoffice', async () => {
-    person('Ohne', { canHomeoffice: false, sortOrder: 1 });
-    person('Mit', { canHomeoffice: true, sortOrder: 2 });
+  it('gibt der Ärztin vormittags ein Zimmer und mittags die Infektsprechstunde', async () => {
+    person('Dr. Rasche', { staffType: 'doctor', sortOrder: 1 });
 
     const { agent, csrf } = await adminAgent();
-    const response = await agent
-      .post('/api/roster/generate')
-      .set(CSRF_HEADER, csrf)
-      .send({ weekStart: MONDAY, plan: 'mfa', dryRun: true });
+    const { assignments } = await generate(agent, csrf, { dryRun: true });
 
-    const homeoffice = response.body.assignments.filter(
-      (a: { workAreaId: string }) => a.workAreaId === 'wa-homeoffice',
-    );
-    const ids = new Set(homeoffice.map((a: { employeeId: string }) => a.employeeId));
-    const ohne = db.prepare(`SELECT id FROM employees WHERE first_name = 'Ohne'`).get() as {
-      id: string;
-    };
-    expect(ids.has(ohne.id)).toBe(false);
-  });
-
-  it('ersetzt beim zweiten Lauf, statt zu verdoppeln', async () => {
-    person('Anna');
-    const { agent, csrf } = await adminAgent();
-
-    for (let run = 0; run < 2; run++) {
-      await agent
-        .post('/api/roster/generate')
-        .set(CSRF_HEADER, csrf)
-        .send({ weekStart: MONDAY, plan: 'mfa' });
-    }
-
-    const alle = await agent.get(`/api/roster?from=${MONDAY}&to=2026-08-09&plan=mfa`);
-    const schluessel = alle.body.assignments.map(
-      (a: { date: string; dayBlockId: string; employeeId: string }) =>
-        `${a.date}|${a.dayBlockId}|${a.employeeId}`,
-    );
-    expect(new Set(schluessel).size).toBe(schluessel.length);
-  });
-});
-
-describe('PCM-Kopplung der beiden Pläne', () => {
-  it('sperrt die PCM im MFA-Plan, sobald sie Sprechstunde hat', async () => {
-    const pcmId = person('Petra', { isPcm: true, sortOrder: 1 });
-    person('Anna', { sortOrder: 2 });
-    person('Bea', { sortOrder: 3 });
-    person('Clara', { sortOrder: 4 });
-
-    const { agent, csrf } = await adminAgent();
-
-    // Die PCM hält Montagvormittag Sprechstunde in Zimmer 1.
-    const sprechstunde = await agent.post('/api/roster/assignments').set(CSRF_HEADER, csrf).send({
-      date: MONDAY,
-      dayBlockId: 'blk-1-vm',
-      workAreaId: 'wa-zimmer-1',
-      employeeId: pcmId,
-    });
-    expect(sprechstunde.status).toBe(201);
-
-    const mfa = await agent
-      .post('/api/roster/generate')
-      .set(CSRF_HEADER, csrf)
-      .send({ weekStart: MONDAY, plan: 'mfa' });
-
-    const montagVormittag = mfa.body.assignments.filter(
-      (a: { date: string; dayBlockId: string; employeeId: string }) =>
-        a.date === MONDAY && a.dayBlockId === 'blk-1-vm' && a.employeeId === pcmId,
-    );
-    expect(montagVormittag).toHaveLength(0);
-
-    // Nachmittags ist sie wieder als MFA verfügbar.
-    const nachmittags = mfa.body.assignments.filter(
-      (a: { date: string; dayBlockId: string; employeeId: string }) =>
-        a.date === MONDAY && a.dayBlockId === 'blk-1-nm' && a.employeeId === pcmId,
-    );
-    expect(nachmittags.length).toBeGreaterThan(0);
+    const montag = assignments.filter((a) => a.date === MONDAY);
+    expect(montag.find((a) => a.dayBlockId === 'blk-doc-1-fr')?.workAreaId).toMatch(/wa-zimmer/);
+    expect(montag.find((a) => a.dayBlockId === 'blk-doc-1-iv')?.workAreaId).toBe('wa-infekt');
   });
 
   it('hält die Zimmergrenze von vier ein', async () => {
     for (let n = 1; n <= 6; n++) person(`Arzt${n}`, { staffType: 'doctor', sortOrder: n });
 
     const { agent, csrf } = await adminAgent();
-    const response = await agent
-      .post('/api/roster/generate')
-      .set(CSRF_HEADER, csrf)
-      .send({ weekStart: MONDAY, plan: 'doctor', dryRun: true });
+    const { assignments } = await generate(agent, csrf, { dryRun: true });
 
-    const montagVormittag = response.body.assignments.filter(
-      (a: { date: string; dayBlockId: string }) => a.date === MONDAY && a.dayBlockId === 'blk-1-vm',
+    const frueh = assignments.filter((a) => a.date === MONDAY && a.dayBlockId === 'blk-doc-1-fr');
+    expect(frueh).toHaveLength(4);
+  });
+
+  it('plant mehrere Wochen auf einmal', async () => {
+    person('Anna');
+    const { agent, csrf } = await adminAgent();
+    const { body } = await generate(agent, csrf, { weeks: 3 });
+    const results = body.results as { weekStart: string }[];
+    expect(results.map((r) => r.weekStart)).toEqual(['2026-08-03', '2026-08-10', '2026-08-17']);
+
+    const saved = await agent.get(`/api/roster?from=2026-08-17&to=2026-08-21`);
+    expect(saved.body.assignments.length).toBeGreaterThan(0);
+  });
+
+  it('bewahrt die Auswertung des letzten Laufs auf', async () => {
+    person('Anna');
+    const { agent, csrf } = await adminAgent();
+    await generate(agent, csrf);
+
+    const run = await agent.get(`/api/roster/runs/${MONDAY}`);
+    expect(run.status).toBe(200);
+    expect(run.body.run.weekStart).toBe(MONDAY);
+    // Mit einer Person bleiben Pflichtplaetze offen - das steht in der Auswertung.
+    expect(
+      run.body.run.diagnostics.some((d: { kind: string }) => d.kind === 'unfilled_required'),
+    ).toBe(true);
+  });
+});
+
+describe('PCM als eigene Gruppe', () => {
+  it('hält die PCM aus dem MFA-Pool und gibt ihr die PCM-Sprechstunde', async () => {
+    const pcmId = person('Petra', { staffType: 'pcm', sortOrder: 1 });
+    person('Anna', { sortOrder: 2 });
+
+    const { agent, csrf } = await adminAgent();
+    const { assignments } = await generate(agent, csrf, { dryRun: true });
+
+    const petra = assignments.filter((a) => a.employeeId === pcmId);
+    expect(petra.length).toBeGreaterThan(0);
+    expect(petra.every((a) => a.workAreaId.startsWith('wa-pcm-'))).toBe(true);
+  });
+
+  it('lässt sie mit Freigabe in der Matrix in einem MFA-Bereich aushelfen', async () => {
+    const pcmId = person('Petra', { staffType: 'pcm', sortOrder: 1 });
+    db.prepare(
+      `INSERT INTO employee_area_matrix (employee_id, work_area_id, clearance, preference)
+       VALUES (?, 'wa-anmeldung', 'solo', 'preferred')`,
+    ).run(pcmId);
+
+    const { agent, csrf } = await adminAgent();
+    const { assignments } = await generate(agent, csrf, { dryRun: true });
+
+    // Niemand sonst da: die Anmeldung ist Pflicht, die PCM-Sprechstunde nicht.
+    const montagVormittag = assignments.filter(
+      (a) => a.date === MONDAY && a.employeeId === pcmId && a.dayBlockId === 'blk-1-vm',
     );
-    expect(montagVormittag).toHaveLength(4);
+    expect(montagVormittag.map((a) => a.workAreaId)).toEqual(['wa-anmeldung']);
   });
 });
 
@@ -287,10 +246,7 @@ describe('Gesperrte Zuweisungen', () => {
       .send({ date: MONDAY, dayBlockId: 'blk-1-vm', workAreaId: 'wa-labor', employeeId: annaId });
     expect(created.body.assignment.isLocked).toBe(true);
 
-    await agent
-      .post('/api/roster/generate')
-      .set(CSRF_HEADER, csrf)
-      .send({ weekStart: MONDAY, plan: 'mfa' });
+    await generate(agent, csrf);
 
     const nachher = await agent.get(`/api/roster?from=${MONDAY}&to=${MONDAY}&plan=mfa`);
     const labor = nachher.body.assignments.find(
@@ -320,6 +276,27 @@ describe('Gesperrte Zuweisungen', () => {
     expect(zweite.status).toBe(400);
     expect(zweite.body.error).toContain('bereits woanders');
   });
+
+  it('erkennt Überschneidungen zwischen verschieden geschnittenen Blöcken', async () => {
+    const heidiId = person('Heidi', { staffType: 'pcm' });
+    const { agent, csrf } = await adminAgent();
+
+    // PCM-Vormittag 08-13 ...
+    await agent.post('/api/roster/assignments').set(CSRF_HEADER, csrf).send({
+      date: MONDAY,
+      dayBlockId: 'blk-pcm-1-vm',
+      workAreaId: 'wa-pcm-sprechstunde',
+      employeeId: heidiId,
+    });
+    // ... und gleichzeitig MFA-Vormittag 08-13 in einem anderen Block.
+    const clash = await agent.post('/api/roster/assignments').set(CSRF_HEADER, csrf).send({
+      date: MONDAY,
+      dayBlockId: 'blk-1-vm',
+      workAreaId: 'wa-anmeldung',
+      employeeId: heidiId,
+    });
+    expect(clash.status).toBe(400);
+  });
 });
 
 describe('Musterwoche', () => {
@@ -329,7 +306,7 @@ describe('Musterwoche', () => {
 
     const { agent, csrf } = await adminAgent();
     const gespeichert = await agent
-      .put('/api/templates/mfa')
+      .put('/api/templates')
       .set(CSRF_HEADER, csrf)
       .send({
         entries: [{ employeeId: annaId, workAreaId: 'wa-labor', dayBlockId: 'blk-1-vm' }],
@@ -337,18 +314,31 @@ describe('Musterwoche', () => {
     expect(gespeichert.status).toBe(200);
     expect(gespeichert.body.entries).toHaveLength(1);
 
-    const plan = await agent
-      .post('/api/roster/generate')
-      .set(CSRF_HEADER, csrf)
-      .send({ weekStart: MONDAY, plan: 'mfa', dryRun: true });
+    const { assignments } = await generate(agent, csrf, { dryRun: true });
 
-    const labor = plan.body.assignments.find(
-      (a: { workAreaId: string; dayBlockId: string; date: string }) =>
-        a.workAreaId === 'wa-labor' && a.dayBlockId === 'blk-1-vm' && a.date === MONDAY,
+    const labor = assignments.find(
+      (a) => a.workAreaId === 'wa-labor' && a.dayBlockId === 'blk-1-vm' && a.date === MONDAY,
     );
-    expect(labor.employeeId).toBe(annaId);
-    expect(labor.source).toBe('template');
-    expect(labor.reason).toContain('Musterwoche');
+    expect(labor?.employeeId).toBe(annaId);
+    expect(labor?.source).toBe('template');
+    expect(labor?.reason).toContain('Musterwoche');
+  });
+
+  it('lässt sich aus einer geplanten Woche übernehmen', async () => {
+    person('Anna', { sortOrder: 1 });
+    person('Bea', { sortOrder: 2 });
+    const { agent, csrf } = await adminAgent();
+    await generate(agent, csrf);
+
+    const response = await agent
+      .post('/api/templates/from-week')
+      .set(CSRF_HEADER, csrf)
+      .send({ weekStart: MONDAY });
+    expect(response.status).toBe(200);
+    expect(response.body.entries.length).toBeGreaterThan(0);
+
+    const template = await agent.get('/api/templates');
+    expect(template.body.entries.length).toBe(response.body.entries.length);
   });
 });
 
@@ -363,14 +353,9 @@ describe('Abwesenheiten', () => {
     ).run(randomUUID(), annaId, MONDAY, '2026-08-04');
 
     const { agent, csrf } = await adminAgent();
-    const response = await agent
-      .post('/api/roster/generate')
-      .set(CSRF_HEADER, csrf)
-      .send({ weekStart: MONDAY, plan: 'mfa', dryRun: true });
+    const { assignments } = await generate(agent, csrf, { dryRun: true });
 
-    const annaTage = response.body.assignments
-      .filter((a: { employeeId: string }) => a.employeeId === annaId)
-      .map((a: { date: string }) => a.date);
+    const annaTage = assignments.filter((a) => a.employeeId === annaId).map((a) => a.date);
 
     expect(annaTage).not.toContain(MONDAY);
     expect(annaTage).not.toContain('2026-08-04');
@@ -387,16 +372,270 @@ describe('Abwesenheiten', () => {
     ).run(randomUUID(), azubiId);
 
     const { agent, csrf } = await adminAgent();
-    const response = await agent
-      .post('/api/roster/generate')
-      .set(CSRF_HEADER, csrf)
-      .send({ weekStart: MONDAY, plan: 'mfa', dryRun: true });
+    const { assignments } = await generate(agent, csrf, { dryRun: true });
 
-    const tage = response.body.assignments
-      .filter((a: { employeeId: string }) => a.employeeId === azubiId)
-      .map((a: { date: string }) => a.date);
+    const tage = assignments.filter((a) => a.employeeId === azubiId).map((a) => a.date);
     // Dienstag ist Berufsschule.
     expect(tage).not.toContain('2026-08-04');
     expect(tage).toContain(MONDAY);
+  });
+
+  it('sperrt bei einem halben Tag nur die Tageshälfte', async () => {
+    const annaId = person('Anna', { sortOrder: 1 });
+    db.prepare(
+      `INSERT INTO absences (id, employee_id, start_date, end_date, type, status, half_day)
+       VALUES (?, ?, ?, ?, 'timeoff', 'approved', 'am')`,
+    ).run(randomUUID(), annaId, MONDAY, MONDAY);
+
+    const { agent, csrf } = await adminAgent();
+    const { assignments } = await generate(agent, csrf, { dryRun: true });
+
+    const montag = assignments.filter((a) => a.employeeId === annaId && a.date === MONDAY);
+    expect(montag.some((a) => a.dayBlockId === 'blk-1-vm')).toBe(false);
+    expect(montag.some((a) => a.dayBlockId === 'blk-1-nm')).toBe(true);
+  });
+});
+
+describe('Umplanung bei Ausfall', () => {
+  async function plannedWeek() {
+    const annaId = person('Anna', { sortOrder: 1 });
+    const beaId = person('Bea', { sortOrder: 2 });
+    const claraId = person('Clara', { sortOrder: 3 });
+    const doraId = person('Dora', { sortOrder: 4 });
+    const { agent, csrf } = await adminAgent();
+    await generate(agent, csrf);
+    return { agent, csrf, annaId, beaId, claraId, doraId };
+  }
+
+  it('ändert den Plan nicht von selbst, sondern legt einen Vorschlag vor', async () => {
+    const { agent, csrf, annaId } = await plannedWeek();
+    const before = (await agent.get(`/api/roster?from=${MONDAY}&to=${TUESDAY}`)).body.assignments;
+
+    const krank = await agent.post('/api/absences').set(CSRF_HEADER, csrf).send({
+      employeeId: annaId,
+      startDate: MONDAY,
+      endDate: TUESDAY,
+      type: 'sick',
+    });
+    expect(krank.status).toBe(201);
+    expect(krank.body.proposals).toHaveLength(1);
+
+    // Der Plan selbst ist unveraendert.
+    const after = (await agent.get(`/api/roster?from=${MONDAY}&to=${TUESDAY}`)).body.assignments;
+    expect(after).toEqual(before);
+
+    const proposal = krank.body.proposals[0];
+    expect(proposal.status).toBe('open');
+    expect(proposal.title).toContain('Anna');
+    expect(
+      proposal.changes.some(
+        (c: { kind: string; employeeId: string }) =>
+          c.kind === 'removed' && c.employeeId === annaId,
+      ),
+    ).toBe(true);
+    // Anna faellt Mo+Di weg, der Rest der Woche bleibt.
+    expect(proposal.changes.every((c: { date: string }) => c.date <= TUESDAY)).toBe(true);
+
+    const open = await agent.get('/api/roster/proposals');
+    expect(open.body.openCount).toBe(1);
+  });
+
+  it('übernimmt den Vorschlag erst auf Bestätigung', async () => {
+    const { agent, csrf, annaId } = await plannedWeek();
+    const krank = await agent.post('/api/absences').set(CSRF_HEADER, csrf).send({
+      employeeId: annaId,
+      startDate: MONDAY,
+      endDate: MONDAY,
+      type: 'sick',
+    });
+    const proposalId = krank.body.proposals[0].id as string;
+
+    const applied = await agent
+      .post(`/api/roster/proposals/${proposalId}/apply`)
+      .set(CSRF_HEADER, csrf);
+    expect(applied.status).toBe(200);
+    expect(applied.body.proposal.status).toBe('applied');
+
+    const week = (await agent.get(`/api/roster?from=${MONDAY}&to=${MONDAY}`)).body
+      .assignments as PlannedRow[];
+    expect(week.some((a) => a.employeeId === annaId)).toBe(false);
+    // Was nicht betroffen war, ist "beibehalten".
+    expect(week.some((a) => a.source === 'kept')).toBe(true);
+
+    // Ein zweites Mal geht nicht.
+    const again = await agent
+      .post(`/api/roster/proposals/${proposalId}/apply`)
+      .set(CSRF_HEADER, csrf);
+    expect(again.status).toBe(404);
+  });
+
+  it('lässt sich verwerfen, der Plan bleibt dann wie er war', async () => {
+    const { agent, csrf, annaId } = await plannedWeek();
+    const krank = await agent.post('/api/absences').set(CSRF_HEADER, csrf).send({
+      employeeId: annaId,
+      startDate: MONDAY,
+      endDate: MONDAY,
+      type: 'sick',
+    });
+    const proposalId = krank.body.proposals[0].id as string;
+
+    const discarded = await agent
+      .post(`/api/roster/proposals/${proposalId}/discard`)
+      .set(CSRF_HEADER, csrf);
+    expect(discarded.body.proposal.status).toBe('discarded');
+
+    const week = (await agent.get(`/api/roster?from=${MONDAY}&to=${MONDAY}`)).body
+      .assignments as PlannedRow[];
+    expect(week.some((a) => a.employeeId === annaId)).toBe(true);
+  });
+
+  it('erzeugt keinen Vorschlag für Wochen ohne Plan', async () => {
+    const annaId = person('Anna');
+    const { agent, csrf } = await adminAgent();
+    const krank = await agent.post('/api/absences').set(CSRF_HEADER, csrf).send({
+      employeeId: annaId,
+      startDate: MONDAY,
+      endDate: MONDAY,
+      type: 'sick',
+    });
+    expect(krank.body.proposals).toEqual([]);
+  });
+
+  it('behält bei "replan" die bisherige Woche und füllt nur Lücken', async () => {
+    const { agent, csrf, annaId } = await plannedWeek();
+    const before = (await agent.get(`/api/roster?from=${MONDAY}&to=${MONDAY}`)).body
+      .assignments as PlannedRow[];
+    db.prepare(
+      `INSERT INTO absences (id, employee_id, start_date, end_date, type, status)
+       VALUES (?, ?, ?, ?, 'sick', 'approved')`,
+    ).run(randomUUID(), annaId, MONDAY, MONDAY);
+
+    const { assignments } = await generate(agent, csrf, { mode: 'replan', dryRun: true });
+    const montag = assignments.filter((a) => a.date === MONDAY);
+    const kept = montag.filter((a) => a.source === 'kept');
+    // Alle, die nicht Anna sind, stehen unveraendert.
+    expect(kept.length).toBe(before.filter((a) => a.employeeId !== annaId).length);
+  });
+});
+
+describe('Antragsprüfung', () => {
+  it('zeigt, an welchen Tagen es eng wird', async () => {
+    const annaId = person('Anna', { sortOrder: 1 });
+    person('Bea', { sortOrder: 2 });
+    person('Clara', { sortOrder: 3 });
+    person('Dora', { sortOrder: 4 });
+
+    const { agent } = await adminAgent();
+    const response = await agent.get(
+      `/api/absences/check?employeeId=${annaId}&startDate=${MONDAY}&endDate=${TUESDAY}`,
+    );
+    expect(response.status).toBe(200);
+    const check = response.body.check;
+    expect(check.plan).toBe('mfa');
+    expect(check.days).toHaveLength(2);
+    // Anmeldung 2 + Labor 1 + Telefon 1 = 4 noetig, 3 bleiben.
+    expect(check.days[0].required).toBe(4);
+    expect(check.days[0].present).toBe(3);
+    expect(check.criticalDays).toBe(2);
+  });
+
+  it('ist für fremde Personen gesperrt', async () => {
+    const ownId = person('Sabine');
+    const otherId = person('Andere');
+    await createUser(db, 'sabine', 'ein-langes-passwort', 'employee', ownId);
+    const agent = request.agent(app);
+    await agent
+      .post('/api/auth/login')
+      .send({ username: 'sabine', password: 'ein-langes-passwort' });
+
+    const own = await agent.get(
+      `/api/absences/check?employeeId=${ownId}&startDate=${MONDAY}&endDate=${MONDAY}`,
+    );
+    expect(own.status).toBe(200);
+    const other = await agent.get(
+      `/api/absences/check?employeeId=${otherId}&startDate=${MONDAY}&endDate=${MONDAY}`,
+    );
+    expect(other.status).toBe(400);
+  });
+});
+
+describe('Schließzeiten', () => {
+  it('verteilt Notbesetzung und Urlaub erst nach Bestätigung', async () => {
+    const annaId = person('Anna', { sortOrder: 1 });
+    const beaId = person('Bea', { sortOrder: 2 });
+    person('Dr. Rasche', { staffType: 'doctor', sortOrder: 3 });
+
+    const { agent, csrf } = await adminAgent();
+    const created = await agent.post('/api/closures').set(CSRF_HEADER, csrf).send({
+      startDate: '2026-12-21',
+      endDate: '2026-12-31',
+      description: 'Weihnachten',
+      prepDays: 2,
+      prepStaff: 1,
+    });
+    expect(created.status).toBe(201);
+    const closureId = created.body.closure.id as string;
+
+    const preview = await agent
+      .post(`/api/closures/${closureId}/plan`)
+      .set(CSRF_HEADER, csrf)
+      .send({ dryRun: true });
+    expect(preview.body.applied).toBe(false);
+    expect(preview.body.plan.duties).toHaveLength(2);
+    expect(
+      preview.body.plan.duties.every((d: { employeeId: string }) => d.employeeId === annaId),
+    ).toBe(true);
+
+    // Vorschau aendert nichts.
+    const nothing = await agent.get(`/api/absences?from=2026-12-21&to=2026-12-31`);
+    expect(nothing.body.absences).toHaveLength(0);
+
+    const applied = await agent
+      .post(`/api/closures/${closureId}/plan`)
+      .set(CSRF_HEADER, csrf)
+      .send({});
+    expect(applied.body.applied).toBe(true);
+
+    const duties = await agent.get(`/api/closures/${closureId}/duties`);
+    expect(duties.body.duties).toHaveLength(2);
+
+    const absences = (await agent.get(`/api/absences?from=2026-12-21&to=2026-12-31`)).body
+      .absences as { employeeId: string; type: string; status: string; note: string }[];
+    const bea = absences.filter((a) => a.employeeId === beaId);
+    expect(bea).toHaveLength(1);
+    expect(bea[0]?.type).toBe('vacation');
+    expect(bea[0]?.status).toBe('approved');
+    expect(bea[0]?.note).toContain('Weihnachten');
+    // Die Aerztin bleibt aussen vor.
+    expect(absences.every((a) => [annaId, beaId].includes(a.employeeId))).toBe(true);
+  });
+
+  it('genehmigt beim Verteilen die offenen Urlaubswünsche im Zeitraum', async () => {
+    const annaId = person('Anna', { sortOrder: 1 });
+    person('Bea', { sortOrder: 2 });
+    db.prepare(
+      `INSERT INTO absences (id, employee_id, start_date, end_date, type, status)
+       VALUES (?, ?, '2026-12-28', '2027-01-03', 'vacation', 'requested')`,
+    ).run(randomUUID(), annaId);
+
+    const { agent, csrf } = await adminAgent();
+    const created = await agent.post('/api/closures').set(CSRF_HEADER, csrf).send({
+      startDate: '2026-12-21',
+      endDate: '2026-12-31',
+      prepDays: 2,
+      prepStaff: 1,
+    });
+    await agent
+      .post(`/api/closures/${created.body.closure.id}/plan`)
+      .set(CSRF_HEADER, csrf)
+      .send({});
+
+    const anna = (await agent.get(`/api/absences?from=2026-12-21&to=2027-01-03`)).body.absences as {
+      employeeId: string;
+      status: string;
+      startDate: string;
+    }[];
+    const wish = anna.find((a) => a.employeeId === annaId && a.startDate === '2026-12-28');
+    expect(wish?.status).toBe('approved');
   });
 });

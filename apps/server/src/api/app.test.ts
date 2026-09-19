@@ -215,6 +215,7 @@ describe('GET /api/employees', () => {
       startMin: 480,
       endMin: 1020,
       breakMin: 60,
+      location: 'practice',
     });
     expect(employee.skillIds).toEqual([]);
   });

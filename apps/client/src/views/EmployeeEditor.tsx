@@ -3,6 +3,7 @@ import { Loader2 } from 'lucide-react';
 import type { DayWorkTime, Employee, PracticeWeekday, Skill } from '@haeppi/shared';
 import {
   PRACTICE_WEEKDAYS,
+  STAFF_TYPE_LABELS,
   WEEKDAY_LABELS,
   contractedHoursPerWeek,
   formatHHMM,
@@ -14,14 +15,19 @@ import type { EmployeeInput } from '../api/queries';
 import { useSaveEmployee } from '../api/queries';
 import { Button, Checkbox, ErrorNote, Field, Modal, Select, TextInput } from '../components/ui';
 
-const DEFAULT_DAY: DayWorkTime = { isWorking: true, startMin: 480, endMin: 1020, breakMin: 60 };
+const DEFAULT_DAY: DayWorkTime = {
+  isWorking: true,
+  startMin: 480,
+  endMin: 1020,
+  breakMin: 60,
+  location: 'practice',
+};
 
 function emptyEmployee(): EmployeeInput {
   return {
     firstName: '',
     lastName: '',
     staffType: 'mfa',
-    isPcm: false,
     employment: 'fulltime',
     targetHoursPerWeek: 40,
     canHomeoffice: false,
@@ -114,16 +120,25 @@ export function EmployeeEditor({
             />
           </Field>
 
-          <Field label="Rolle">
+          <Field
+            label="Gruppe"
+            hint={
+              draft.staffType === 'pcm'
+                ? 'Eigene Gruppe mit eigenen Bereichen. Aushilfe in MFA-Bereichen nur mit Freigabe in der Einsatz-Matrix.'
+                : undefined
+            }
+          >
             <Select
               value={draft.staffType}
               onChange={(event) =>
                 patch({ staffType: event.target.value as EmployeeInput['staffType'] })
               }
             >
-              <option value="doctor">Arzt / Ärztin</option>
-              <option value="mfa">MFA</option>
-              <option value="trainee">Auszubildende/r</option>
+              {(Object.keys(STAFF_TYPE_LABELS) as EmployeeInput['staffType'][]).map((value) => (
+                <option key={value} value={value}>
+                  {STAFF_TYPE_LABELS[value]}
+                </option>
+              ))}
             </Select>
           </Field>
 
@@ -175,16 +190,6 @@ export function EmployeeEditor({
             onChange={(value) => patch({ canHomeoffice: value })}
           />
           <Checkbox
-            label={
-              <span title="Hält eigene Sprechstunde, belegt dabei ein Zimmer und ist solange aus dem MFA-Pool gesperrt">
-                Primary Care Managerin (PCM)
-              </span>
-            }
-            checked={draft.isPcm}
-            onChange={(value) => patch({ isPcm: value })}
-            disabled={draft.staffType === 'doctor'}
-          />
-          <Checkbox
             label="Aktiv"
             checked={draft.isActive}
             onChange={(value) => patch({ isActive: value })}
@@ -211,6 +216,7 @@ export function EmployeeEditor({
                   <th className="px-3 py-2 font-medium">Von</th>
                   <th className="px-3 py-2 font-medium">Bis</th>
                   <th className="px-3 py-2 font-medium">Pause (Min.)</th>
+                  <th className="px-3 py-2 font-medium">Ort</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -254,6 +260,23 @@ export function EmployeeEditor({
                           className="w-24"
                         />
                       </td>
+                      <td className="px-3 py-2">
+                        <Select
+                          disabled={!day.isWorking}
+                          value={day.location}
+                          onChange={(event) =>
+                            patchDay(weekday, {
+                              location: event.target.value as DayWorkTime['location'],
+                            })
+                          }
+                          className="w-32"
+                        >
+                          <option value="practice">Praxis</option>
+                          <option value="home" disabled={!draft.canHomeoffice}>
+                            Homeoffice
+                          </option>
+                        </Select>
+                      </td>
                     </tr>
                   );
                 })}
@@ -261,7 +284,8 @@ export function EmployeeEditor({
             </table>
           </div>
           <p className="mt-2 text-xs text-slate-500">
-            Die Pause wird nur von der Arbeitszeit abgezogen und nicht verplant.
+            Die Pause wird nur von der Arbeitszeit abgezogen und nicht verplant. An einem
+            Homeoffice-Tag kommen nur Bereiche in Frage, die von zu Hause gehen.
           </p>
         </section>
 

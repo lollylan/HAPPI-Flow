@@ -3,14 +3,22 @@ import type {
   Absence,
   AbsenceType,
   Assignment,
+  Closure,
+  ClosureDuty,
+  ClosurePlan,
+  CoverageResult,
   DayBlock,
   Diagnostic,
   Employee,
   HolidaySettings,
   MatrixEntry,
+  PlanChange,
   PlanKind,
+  PlanMode,
+  PlanProposal,
   PlannedAssignment,
   PublicAbsence,
+  SchedulerWeights,
   SessionUser,
   Skill,
   TemplateAssignment,
@@ -27,6 +35,9 @@ export const queryKeys = {
   dayBlocks: ['day-blocks'] as const,
   settings: ['settings'] as const,
   matrix: ['matrix'] as const,
+  template: ['template'] as const,
+  closures: ['closures'] as const,
+  proposals: ['proposals'] as const,
 };
 
 export interface PracticeSettings {
@@ -34,6 +45,7 @@ export interface PracticeSettings {
   holidays: HolidaySettings;
   minOverlapRatio: number;
   fairnessWeeks: number;
+  weights: SchedulerWeights;
 }
 
 // ------------------------------------------------------------------ Auth --
@@ -256,8 +268,16 @@ export function useDayBlocks() {
 export function useSaveDayBlocks() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ blocks, force }: { blocks: Omit<DayBlock, 'id'>[]; force?: boolean }) =>
-      api<{ dayBlocks: DayBlock[] }>(`/day-blocks${force ? '?force=1' : ''}`, {
+    mutationFn: ({
+      plan,
+      blocks,
+      force,
+    }: {
+      plan: PlanKind;
+      blocks: (Omit<DayBlock, 'id'> & { id?: string })[];
+      force?: boolean;
+    }) =>
+      api<{ dayBlocks: DayBlock[] }>(`/day-blocks/${plan}${force ? '?force=1' : ''}`, {
         method: 'PUT',
         body: { blocks },
       }),
@@ -286,6 +306,20 @@ export function useSaveHolidaySettings() {
   });
 }
 
+export function useSavePlanningSettings() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: {
+      weights: Partial<SchedulerWeights>;
+      minOverlapRatio: number;
+      fairnessWeeks: number;
+    }) => api<{ settings: PracticeSettings }>('/settings/planning', { method: 'PUT', body: input }),
+    onSuccess: ({ settings }) => {
+      queryClient.setQueryData(queryKeys.settings, settings);
+    },
+  });
+}
+
 // -------------------------------------------------------- Einsatz-Matrix --
 
 export function useMatrix() {
@@ -297,37 +331,85 @@ export function useMatrix() {
 
 export type MatrixEntryInput = Omit<MatrixEntry, 'employeeId'>;
 
+export function useSaveMatrixRow() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ employeeId, entries }: { employeeId: string; entries: MatrixEntryInput[] }) =>
+      api<{ entries: MatrixEntry[] }>(`/employees/${employeeId}/matrix`, {
+        method: 'PUT',
+        body: { entries },
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.matrix });
+    },
+  });
+}
+
 // ------------------------------------------------------------ Dienstplan --
 
-export const rosterKey = (from: string, to: string, plan: PlanKind) =>
-  ['roster', from, to, plan] as const;
+export const rosterKey = (from: string, to: string) => ['roster', from, to] as const;
 
-export function useRoster(from: string, to: string, plan: PlanKind) {
+/** Alle Gruppen auf einmal - der Plan ist einer. */
+export function useRoster(from: string, to: string) {
   return useQuery({
-    queryKey: rosterKey(from, to, plan),
+    queryKey: rosterKey(from, to),
     queryFn: async () =>
-      (await api<{ assignments: Assignment[] }>(`/roster?from=${from}&to=${to}&plan=${plan}`))
-        .assignments,
+      (await api<{ assignments: Assignment[] }>(`/roster?from=${from}&to=${to}`)).assignments,
   });
+}
+
+export function useDuties(from: string, to: string) {
+  return useQuery({
+    queryKey: ['duties', from, to],
+    queryFn: async () =>
+      (await api<{ duties: ClosureDuty[] }>(`/roster/duties?from=${from}&to=${to}`)).duties,
+  });
+}
+
+export interface WeekResult {
+  weekStart: string;
+  assignments: PlannedAssignment[];
+  diagnostics: Diagnostic[];
+  changes: PlanChange[];
+  score: number;
 }
 
 export interface GenerateResult {
   weekStart: string;
-  plan: PlanKind;
+  weeks: number;
+  mode: PlanMode;
   dryRun: boolean;
-  assignments: PlannedAssignment[];
-  diagnostics: Diagnostic[];
-  score: number;
+  results: WeekResult[];
 }
 
 export function useGenerateRoster() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: { weekStart: string; plan: PlanKind; dryRun?: boolean }) =>
+    mutationFn: (input: { weekStart: string; weeks?: number; mode?: PlanMode; dryRun?: boolean }) =>
       api<GenerateResult>('/roster/generate', { method: 'POST', body: input }),
     onSuccess: (result) => {
-      if (!result.dryRun) void queryClient.invalidateQueries({ queryKey: ['roster'] });
+      if (!result.dryRun) {
+        void queryClient.invalidateQueries({ queryKey: ['roster'] });
+        void queryClient.invalidateQueries({ queryKey: ['plan-run'] });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.proposals });
+      }
     },
+  });
+}
+
+export interface PlanRun {
+  id: string;
+  weekStart: string;
+  mode: string;
+  at: string;
+  diagnostics: Diagnostic[];
+  score: number;
+}
+
+export function useLastPlanRun(weekStart: string) {
+  return useQuery({
+    queryKey: ['plan-run', weekStart],
+    queryFn: async () => (await api<{ run: PlanRun | null }>(`/roster/runs/${weekStart}`)).run,
   });
 }
 
@@ -364,30 +446,68 @@ export function useToggleLock() {
   });
 }
 
-export function useTemplate(plan: PlanKind) {
+// ------------------------------------------------ Umplanungsvorschlaege --
+
+export function useProposals(enabled: boolean) {
   return useQuery({
-    queryKey: ['template', plan],
+    queryKey: queryKeys.proposals,
     queryFn: async () =>
-      (await api<{ entries: TemplateAssignment[] }>(`/templates/${plan}`)).entries,
+      api<{ proposals: PlanProposal[]; openCount: number }>('/roster/proposals?status=open'),
+    enabled,
+  });
+}
+
+export function useProposalDetail(id: string | null) {
+  return useQuery({
+    queryKey: [...queryKeys.proposals, id],
+    queryFn: async () =>
+      api<{ proposal: PlanProposal; assignments: PlannedAssignment[]; diagnostics: Diagnostic[] }>(
+        `/roster/proposals/${id}`,
+      ),
+    enabled: id !== null,
+  });
+}
+
+export function useDecideProposal() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, action }: { id: string; action: 'apply' | 'discard' }) =>
+      api<{ proposal: PlanProposal }>(`/roster/proposals/${id}/${action}`, { method: 'POST' }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.proposals });
+      void queryClient.invalidateQueries({ queryKey: ['roster'] });
+      void queryClient.invalidateQueries({ queryKey: ['plan-run'] });
+    },
+  });
+}
+
+// ----------------------------------------------------------- Musterwoche --
+
+export function useTemplate() {
+  return useQuery({
+    queryKey: queryKeys.template,
+    queryFn: async () => (await api<{ entries: TemplateAssignment[] }>('/templates')).entries,
   });
 }
 
 export function useSaveTemplate() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({
-      plan,
-      entries,
-    }: {
-      plan: PlanKind;
-      entries: Omit<TemplateAssignment, 'id'>[];
-    }) =>
-      api<{ entries: TemplateAssignment[] }>(`/templates/${plan}`, {
-        method: 'PUT',
-        body: { entries },
+    mutationFn: (entries: Omit<TemplateAssignment, 'id'>[]) =>
+      api<{ entries: TemplateAssignment[] }>('/templates', { method: 'PUT', body: { entries } }),
+    onSuccess: ({ entries }) => queryClient.setQueryData(queryKeys.template, entries),
+  });
+}
+
+export function useTemplateFromWeek() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (weekStart: string) =>
+      api<{ entries: TemplateAssignment[] }>('/templates/from-week', {
+        method: 'POST',
+        body: { weekStart },
       }),
-    onSuccess: (_result, variables) =>
-      void queryClient.invalidateQueries({ queryKey: ['template', variables.plan] }),
+    onSuccess: ({ entries }) => queryClient.setQueryData(queryKeys.template, entries),
   });
 }
 
@@ -410,6 +530,21 @@ export function useOpenRequestCount(enabled: boolean) {
   });
 }
 
+/** Antragspruefung: wird es an den Tagen eng? */
+export function useAbsenceCheck(employeeId: string, startDate: string, endDate: string) {
+  const valid = employeeId !== '' && /^\d{4}-\d{2}-\d{2}$/.test(startDate) && endDate >= startDate;
+  return useQuery({
+    queryKey: ['absence-check', employeeId, startDate, endDate],
+    queryFn: async () =>
+      (
+        await api<{ check: CoverageResult }>(
+          `/absences/check?employeeId=${employeeId}&startDate=${startDate}&endDate=${endDate}`,
+        )
+      ).check,
+    enabled: valid,
+  });
+}
+
 export function useCreateAbsence() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -420,10 +555,15 @@ export function useCreateAbsence() {
       type: AbsenceType;
       halfDay?: 'am' | 'pm' | null;
       note?: string;
-    }) => api<{ absence: Absence }>('/absences', { method: 'POST', body: input }),
+    }) =>
+      api<{ absence: Absence; proposals: PlanProposal[] }>('/absences', {
+        method: 'POST',
+        body: input,
+      }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['absences'] });
       void queryClient.invalidateQueries({ queryKey: ['vacation'] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.proposals });
     },
   });
 }
@@ -432,8 +572,14 @@ export function useDecideAbsence() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ id, status }: { id: string; status: 'approved' | 'rejected' }) =>
-      api<{ absence: Absence }>(`/absences/${id}/decide`, { method: 'POST', body: { status } }),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['absences'] }),
+      api<{ absence: Absence; proposals: PlanProposal[] }>(`/absences/${id}/decide`, {
+        method: 'POST',
+        body: { status },
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['absences'] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.proposals });
+    },
   });
 }
 
@@ -461,16 +607,65 @@ export function useVacationBalance(employeeId: string | null, year: number) {
   });
 }
 
-export function useSaveMatrixRow() {
+// --------------------------------------------------------- Schliesszeiten --
+
+export function useClosures() {
+  return useQuery({
+    queryKey: queryKeys.closures,
+    queryFn: async () => (await api<{ closures: Closure[] }>('/closures')).closures,
+  });
+}
+
+export type ClosureInput = Omit<Closure, 'id'>;
+
+export function useSaveClosure() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ employeeId, entries }: { employeeId: string; entries: MatrixEntryInput[] }) =>
-      api<{ entries: MatrixEntry[] }>(`/employees/${employeeId}/matrix`, {
-        method: 'PUT',
-        body: { entries },
-      }),
+    mutationFn: ({ id, input }: { id?: string; input: ClosureInput }) =>
+      id
+        ? api<{ closure: Closure }>(`/closures/${id}`, { method: 'PUT', body: input })
+        : api<{ closure: Closure }>('/closures', { method: 'POST', body: input }),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.matrix });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.closures });
+    },
+  });
+}
+
+export function useDeleteClosure() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api<void>(`/closures/${id}`, { method: 'DELETE' }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.closures });
+      void queryClient.invalidateQueries({ queryKey: ['duties'] });
+    },
+  });
+}
+
+export function useClosureDuties(closureId: string | null) {
+  return useQuery({
+    queryKey: ['closure-duties', closureId],
+    queryFn: async () =>
+      (await api<{ duties: ClosureDuty[] }>(`/closures/${closureId}/duties`)).duties,
+    enabled: closureId !== null,
+  });
+}
+
+export function usePlanClosure() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, dryRun }: { id: string; dryRun: boolean }) =>
+      api<{ plan: ClosurePlan; applied: boolean }>(`/closures/${id}/plan`, {
+        method: 'POST',
+        body: { dryRun },
+      }),
+    onSuccess: (result) => {
+      if (result.applied) {
+        void queryClient.invalidateQueries({ queryKey: ['absences'] });
+        void queryClient.invalidateQueries({ queryKey: ['vacation'] });
+        void queryClient.invalidateQueries({ queryKey: ['duties'] });
+        void queryClient.invalidateQueries({ queryKey: ['closure-duties'] });
+      }
     },
   });
 }

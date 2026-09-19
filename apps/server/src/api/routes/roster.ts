@@ -1,45 +1,44 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import type { AbsenceSpan, IsoDate, PlanInput, PlanKind, PlanResult } from '@haeppi/shared';
-import {
-  addDays,
-  assertIsoDate,
-  closedDateSet,
-  generateWeekPlan,
-  planForStaffType,
-  startOfISOWeek,
-} from '@haeppi/shared';
+import type { PlanResult } from '@haeppi/shared';
+import { addDays, assertIsoDate, startOfISOWeek } from '@haeppi/shared';
 import { requireAdmin, requireAuth } from '../../auth/middleware.js';
-import type { Db } from '../../db/index.js';
-import { listEmployees } from '../../db/repositories/employees.js';
-import { listWorkAreas } from '../../db/repositories/workAreas.js';
 import { listDayBlocks } from '../../db/repositories/dayBlocks.js';
-import { listMatrix } from '../../db/repositories/matrix.js';
-import { readPracticeSettings } from '../../db/repositories/settings.js';
+import { listDutiesInRange } from '../../db/repositories/absences.js';
 import {
   createAssignment,
   deleteAssignment,
-  historyCounts,
+  findTimeConflict,
+  lastPlanRun,
   listAssignments,
-  listLockedAssignments,
   listTemplate,
   replaceTemplate,
-  replaceWeek,
   setAssignmentLock,
+  templateFromWeek,
 } from '../../db/repositories/roster.js';
+import {
+  countOpenProposals,
+  decideProposal,
+  getProposal,
+  listProposals,
+} from '../../db/repositories/proposals.js';
 import { badRequest, notFound, parseBody, pathParam } from '../http.js';
 import { writeAudit } from '../audit.js';
+import { applyProposal, planWeek } from '../planning.js';
 
-const planSchema = z.enum(['doctor', 'mfa']);
+const ISO_DATE = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const planSchema = z.enum(['doctor', 'pcm', 'mfa']);
 
 const generateSchema = z.object({
-  weekStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  plan: planSchema,
+  weekStart: ISO_DATE,
+  /** Wie viele Wochen ab `weekStart` - fuer "die nächsten vier Wochen planen". */
+  weeks: z.number().int().min(1).max(12).default(1),
+  mode: z.enum(['fresh', 'replan']).default('fresh'),
   dryRun: z.boolean().optional(),
 });
 
 const assignmentSchema = z.object({
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  date: ISO_DATE,
   dayBlockId: z.string(),
   workAreaId: z.string(),
   employeeId: z.string(),
@@ -55,128 +54,8 @@ const templateSchema = z.object({
         dayBlockId: z.string(),
       }),
     )
-    .max(500),
+    .max(1000),
 });
-
-/** Abwesenheiten im Zeitraum, auf die Felder reduziert, die der Scheduler braucht. */
-function absencesFor(db: Db, from: IsoDate, to: IsoDate): AbsenceSpan[] {
-  const rows = db
-    .prepare(
-      `SELECT employee_id, start_date, end_date, status, half_day
-         FROM absences
-        WHERE status IN ('approved', 'requested')
-          AND start_date <= ? AND end_date >= ?`,
-    )
-    .all(to, from) as {
-    employee_id: string;
-    start_date: string;
-    end_date: string;
-    status: 'approved' | 'requested';
-    half_day: 'am' | 'pm' | null;
-  }[];
-
-  return rows.map((row) => ({
-    employeeId: row.employee_id,
-    startDate: row.start_date,
-    endDate: row.end_date,
-    status: row.status,
-    halfDay: row.half_day,
-  }));
-}
-
-/** Wiederkehrende Abwesenheiten (Berufsschule) als konkrete Tage der Woche. */
-function recurringAbsencesFor(db: Db, weekStart: IsoDate): AbsenceSpan[] {
-  const rows = db
-    .prepare(
-      `SELECT employee_id, weekday, valid_from, valid_to
-         FROM recurring_absences
-        WHERE valid_from <= ? AND (valid_to IS NULL OR valid_to >= ?)`,
-    )
-    .all(addDays(weekStart, 4), weekStart) as {
-    employee_id: string;
-    weekday: number;
-    valid_from: string;
-    valid_to: string | null;
-  }[];
-
-  return rows.map((row) => {
-    const date = addDays(weekStart, row.weekday - 1);
-    return {
-      employeeId: row.employee_id,
-      startDate: date,
-      endDate: date,
-      status: 'approved' as const,
-      halfDay: null,
-    };
-  });
-}
-
-/** Baut die Eingabe fuer den Scheduler aus dem Datenbestand. */
-function buildPlanInput(db: Db, weekStart: IsoDate, plan: PlanKind): PlanInput {
-  const settings = readPracticeSettings(db);
-  const weekEnd = addDays(weekStart, 6);
-  const year = Number(weekStart.slice(0, 4));
-
-  const employees = listEmployees(db)
-    .filter((employee) => planForStaffType(employee.staffType) === plan)
-    .map((employee) => ({
-      id: employee.id,
-      firstName: employee.firstName,
-      lastName: employee.lastName,
-      staffType: employee.staffType,
-      isPcm: employee.isPcm,
-      canHomeoffice: employee.canHomeoffice,
-      skillIds: employee.skillIds,
-      workTimes: employee.workTimes,
-      targetHoursPerWeek: employee.targetHoursPerWeek,
-      sortOrder: employee.sortOrder,
-    }));
-
-  // Praxis-Schliesszeiten zaehlen wie Feiertage: an ihnen wird nicht geplant.
-  const closed = closedDateSet(settings.holidays, year - 1, year + 1);
-  for (const row of db
-    .prepare(`SELECT start_date, end_date FROM closures WHERE start_date <= ? AND end_date >= ?`)
-    .all(weekEnd, weekStart) as { start_date: string; end_date: string }[]) {
-    for (let date = row.start_date; date <= row.end_date; date = addDays(date, 1)) {
-      closed.add(date);
-    }
-  }
-
-  // Die PCM haelt Sprechstunde im Aerzteplan und faellt dort aus dem
-  // MFA-Pool. Deshalb muss der Aerzteplan zuerst stehen.
-  const pcmBusy =
-    plan === 'mfa'
-      ? listAssignments(db, weekStart, weekEnd, 'doctor')
-          .filter((assignment) => employees.some((e) => e.id === assignment.employeeId && e.isPcm))
-          .map((assignment) => ({
-            employeeId: assignment.employeeId,
-            date: assignment.date,
-            dayBlockId: assignment.dayBlockId,
-          }))
-      : [];
-
-  return {
-    weekStart,
-    plan,
-    dayBlocks: listDayBlocks(db),
-    employees,
-    workAreas: listWorkAreas(db),
-    matrix: listMatrix(db),
-    template: listTemplate(db, plan),
-    absences: [...absencesFor(db, weekStart, weekEnd), ...recurringAbsencesFor(db, weekStart)],
-    pinned: listLockedAssignments(db, weekStart, weekEnd, plan).map((assignment) => ({
-      date: assignment.date,
-      dayBlockId: assignment.dayBlockId,
-      workAreaId: assignment.workAreaId,
-      employeeId: assignment.employeeId,
-    })),
-    closedDates: closed,
-    history: historyCounts(db, plan, weekStart, settings.fairnessWeeks),
-    pcmBusy,
-    weights: settings.weights,
-    minOverlapRatio: settings.minOverlapRatio,
-  };
-}
 
 export function rosterRouter(): Router {
   const router = Router();
@@ -195,33 +74,98 @@ export function rosterRouter(): Router {
     });
   });
 
+  /** Notbesetzung an Schliesstagen im Zeitraum - fuer die Anzeige im Plan. */
+  router.get('/duties', requireAuth, (req, res) => {
+    const from = assertIsoDate(String(req.query.from ?? ''));
+    const to = assertIsoDate(String(req.query.to ?? ''));
+    res.json({ duties: listDutiesInRange(req.db, from, to) });
+  });
+
   /**
-   * Erzeugt eine Woche. Mit `dryRun` wird nichts gespeichert - so laesst
-   * sich das Ergebnis erst ansehen und dann uebernehmen.
+   * Plant eine oder mehrere Wochen fuer alle Gruppen. Mit `dryRun` wird
+   * nichts gespeichert - so laesst sich das Ergebnis erst ansehen und
+   * dann uebernehmen. `replan` behaelt die bisherige Woche, soweit moeglich.
    */
   router.post('/generate', requireAdmin, (req, res) => {
-    const { weekStart, plan, dryRun } = parseBody(generateSchema, req.body);
+    const { weekStart, weeks, mode, dryRun } = parseBody(generateSchema, req.body);
     const monday = startOfISOWeek(assertIsoDate(weekStart));
 
-    const result: PlanResult = generateWeekPlan(buildPlanInput(req.db, monday, plan));
-
-    if (!dryRun) {
-      replaceWeek(req.db, plan, monday, addDays(monday, 6), result.assignments);
-      writeAudit(req.db, req.user!.userId, 'generate', 'roster', `${plan}:${monday}`);
+    const results: (PlanResult & { weekStart: string })[] = [];
+    for (let index = 0; index < weeks; index++) {
+      const start = addDays(monday, 7 * index);
+      const result = planWeek(req.db, start, mode, {
+        dryRun: dryRun === true,
+        userId: req.user!.userId,
+      });
+      results.push({ weekStart: start, ...result });
     }
 
     res.json({
       weekStart: monday,
-      plan,
+      weeks,
+      mode,
       dryRun: dryRun === true,
-      assignments: result.assignments,
-      diagnostics: result.diagnostics,
-      score: result.score,
+      results,
     });
   });
 
+  /** Auswertung des letzten gespeicherten Laufs einer Woche. */
+  router.get('/runs/:weekStart', requireAuth, (req, res) => {
+    const monday = startOfISOWeek(assertIsoDate(pathParam(req, 'weekStart')));
+    res.json({ run: lastPlanRun(req.db, monday) });
+  });
+
+  // ------------------------------------------------ Umplanungsvorschlaege --
+
+  router.get('/proposals', requireAdmin, (req, res) => {
+    const status = z.enum(['open', 'applied', 'discarded']).safeParse(req.query.status);
+    res.json({
+      proposals: listProposals(req.db, status.success ? status.data : 'open'),
+      openCount: countOpenProposals(req.db),
+    });
+  });
+
+  router.get('/proposals/:id', requireAdmin, (req, res) => {
+    const found = getProposal(req.db, pathParam(req, 'id'));
+    if (!found) throw notFound('Diesen Vorschlag gibt es nicht.');
+    res.json({
+      proposal: found.proposal,
+      assignments: found.payload.assignments,
+      diagnostics: found.payload.diagnostics,
+    });
+  });
+
+  router.post('/proposals/:id/apply', requireAdmin, (req, res) => {
+    const proposal = applyProposal(req.db, pathParam(req, 'id'), req.user!.userId);
+    if (!proposal) throw notFound('Diesen Vorschlag gibt es nicht oder er ist schon entschieden.');
+    res.json({ proposal });
+  });
+
+  router.post('/proposals/:id/discard', requireAdmin, (req, res) => {
+    const proposal = decideProposal(req.db, pathParam(req, 'id'), 'discarded', req.user!.userId);
+    if (!proposal) throw notFound('Diesen Vorschlag gibt es nicht oder er ist schon entschieden.');
+    writeAudit(req.db, req.user!.userId, 'discard', 'proposal', proposal.id);
+    res.json({ proposal });
+  });
+
+  // -------------------------------------------------------- Zuweisungen --
+
   router.post('/assignments', requireAdmin, (req, res) => {
     const input = parseBody(assignmentSchema, req.body);
+
+    const block = listDayBlocks(req.db).find((entry) => entry.id === input.dayBlockId);
+    if (!block) throw badRequest('Diesen Zeitblock gibt es nicht.');
+    const clash = findTimeConflict(
+      req.db,
+      input.employeeId,
+      input.date,
+      block.startMin,
+      block.endMin,
+    );
+    if (clash) {
+      throw badRequest('Diese Person ist in dem Zeitfenster bereits woanders eingeteilt.');
+    }
+
     const assignment = createAssignment(req.db, {
       date: input.date,
       dayBlockId: input.dayBlockId,
@@ -256,17 +200,24 @@ export function rosterRouter(): Router {
 export function templateRouter(): Router {
   const router = Router();
 
-  router.get('/:plan', requireAuth, (req, res) => {
-    const plan = planSchema.parse(pathParam(req, 'plan'));
-    res.json({ entries: listTemplate(req.db, plan) });
+  router.get('/', requireAuth, (req, res) => {
+    res.json({ entries: listTemplate(req.db) });
   });
 
-  router.put('/:plan', requireAdmin, (req, res) => {
-    const plan = planSchema.parse(pathParam(req, 'plan'));
+  router.put('/', requireAdmin, (req, res) => {
     const { entries } = parseBody(templateSchema, req.body);
-    const saved = replaceTemplate(req.db, plan, entries);
-    writeAudit(req.db, req.user!.userId, 'update', 'template', plan);
+    const saved = replaceTemplate(req.db, entries);
+    writeAudit(req.db, req.user!.userId, 'update', 'template', null, `${entries.length} Zeilen`);
     res.json({ entries: saved });
+  });
+
+  /** Eine konkrete Woche wird zur Musterwoche. */
+  router.post('/from-week', requireAdmin, (req, res) => {
+    const { weekStart } = parseBody(z.object({ weekStart: ISO_DATE }), req.body);
+    const monday = startOfISOWeek(assertIsoDate(weekStart));
+    const entries = templateFromWeek(req.db, monday, addDays(monday, 6));
+    writeAudit(req.db, req.user!.userId, 'update', 'template', null, `aus KW ${monday}`);
+    res.json({ entries });
   });
 
   return router;

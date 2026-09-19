@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   Inbox,
   Palmtree,
+  Sparkles,
   Thermometer,
   Users,
 } from 'lucide-react';
@@ -42,6 +43,7 @@ import {
   useAbsences,
   useDayBlocks,
   useEmployees,
+  useProposals,
   useRoster,
   useSettings,
   useVacationBalance,
@@ -117,8 +119,9 @@ function AdminDashboard({
   const year = Number(today.slice(0, 4));
   const { data: workAreas } = useWorkAreas();
   const { data: dayBlocks } = useDayBlocks();
-  const { data: mfaRoster } = useRoster(weekStart, addDays(weekStart, 6), 'mfa');
+  const { data: roster } = useRoster(weekStart, addDays(weekStart, 6));
   const { data: yearAbsences } = useAbsences(`${year}-01-01`, `${year}-12-31`);
+  const { data: proposals } = useProposals(true);
 
   const requests = useMemo(
     () =>
@@ -147,8 +150,8 @@ function AdminDashboard({
   }, [yearAbsences]);
 
   const coverage = useMemo(() => {
-    if (!workAreas || !dayBlocks || !mfaRoster) return null;
-    const critical = workAreas.filter((area) => area.plan === 'mfa' && area.isCritical);
+    if (!workAreas || !dayBlocks || !roster) return null;
+    const critical = workAreas.filter((area) => area.isCritical);
     const gaps: {
       date: IsoDate;
       area: WorkArea;
@@ -162,9 +165,9 @@ function AdminDashboard({
         (entry) => entry.weekday === isoWeekday(date) && entry.kind !== 'closed',
       )) {
         for (const area of critical) {
-          if (!area.blockIds.includes(block.id)) continue;
+          if (area.plan !== block.plan || !area.blockIds.includes(block.id)) continue;
           const need = minStaffFor(area, block.id);
-          const have = mfaRoster.filter(
+          const have = roster.filter(
             (entry) =>
               entry.date === date && entry.dayBlockId === block.id && entry.workAreaId === area.id,
           ).length;
@@ -181,7 +184,9 @@ function AdminDashboard({
       }
     }
     return gaps;
-  }, [workAreas, dayBlocks, mfaRoster, weekStart]);
+  }, [workAreas, dayBlocks, roster, weekStart]);
+
+  const openProposals = proposals?.proposals ?? [];
 
   return (
     <div className="space-y-6">
@@ -215,10 +220,35 @@ function AdminDashboard({
         />
       </div>
 
+      {openProposals.length > 0 && (
+        <Card className="border-amber-300 p-5 dark:border-amber-700">
+          <h2 className="mb-1 flex items-center gap-2 font-medium">
+            <Sparkles className="size-4 text-amber-500" />
+            {openProposals.length === 1
+              ? 'Ein Umplanungsvorschlag wartet'
+              : `${openProposals.length} Umplanungsvorschläge warten`}
+          </h2>
+          <ul className="mb-3 space-y-1 text-sm text-slate-600 dark:text-slate-400">
+            {openProposals.slice(0, 5).map((proposal) => (
+              <li key={proposal.id}>
+                KW {isoWeekNumber(proposal.weekStart)}: {proposal.title} · {proposal.changes.length}{' '}
+                Änderungen
+              </li>
+            ))}
+          </ul>
+          <Link
+            to="/dienstplan"
+            className="text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"
+          >
+            Im Dienstplan prüfen →
+          </Link>
+        </Card>
+      )}
+
       <Card className="p-5">
         <h2 className="mb-1 font-medium">Kritische Bereiche diese Woche</h2>
         <p className="mb-4 text-sm text-slate-500 dark:text-slate-400">
-          KW {isoWeekNumber(weekStart)} · MFA-Plan
+          KW {isoWeekNumber(weekStart)} · alle Gruppen
         </p>
 
         {coverage === null ? (
@@ -289,7 +319,13 @@ function AdminDashboard({
   );
 }
 
-const WORK = { isWorking: true, startMin: 480, endMin: 1020, breakMin: 60 } as const;
+const WORK = {
+  isWorking: true,
+  startMin: 480,
+  endMin: 1020,
+  breakMin: 60,
+  location: 'practice',
+} as const;
 
 // -------------------------------------------------------- Mitarbeiter --
 
@@ -302,15 +338,12 @@ function EmployeeDashboard({
   today: IsoDate;
   weekStart: IsoDate;
 }) {
-  const { data: mfaRoster } = useRoster(weekStart, addDays(weekStart, 6), 'mfa');
-  const { data: doctorRoster } = useRoster(weekStart, addDays(weekStart, 6), 'doctor');
+  const { data: roster } = useRoster(weekStart, addDays(weekStart, 6));
   const { data: workAreas } = useWorkAreas();
   const { data: dayBlocks } = useDayBlocks();
   const { data: balance } = useVacationBalance(user.employeeId, Number(today.slice(0, 4)));
 
-  const mine = [...(mfaRoster ?? []), ...(doctorRoster ?? [])].filter(
-    (entry) => entry.employeeId === user.employeeId,
-  );
+  const mine = (roster ?? []).filter((entry) => entry.employeeId === user.employeeId);
 
   const describe = (dayBlockId: string) => {
     const block = dayBlocks?.find((entry) => entry.id === dayBlockId);

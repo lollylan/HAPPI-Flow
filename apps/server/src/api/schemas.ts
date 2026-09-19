@@ -4,12 +4,16 @@ const MINUTE = z.number().int().min(0).max(1440);
 const ISO_DATE = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Erwartet ein Datum im Format JJJJ-MM-TT');
 const HEX_COLOR = z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Erwartet eine Farbe wie #3b82f6');
 
+export const PLAN_KIND = z.enum(['doctor', 'pcm', 'mfa']);
+export const STAFF_TYPE = z.enum(['doctor', 'pcm', 'mfa', 'trainee']);
+
 export const dayWorkTimeSchema = z
   .object({
     isWorking: z.boolean(),
     startMin: MINUTE,
     endMin: MINUTE,
     breakMin: z.number().int().min(0).max(480),
+    location: z.enum(['practice', 'home']).default('practice'),
   })
   .refine((day) => !day.isWorking || day.endMin > day.startMin, {
     message: 'Das Arbeitsende muss nach dem Beginn liegen.',
@@ -26,8 +30,7 @@ export const weeklyWorkTimesSchema = z.object({
 export const employeeInputSchema = z.object({
   firstName: z.string().trim().min(1, 'Der Vorname fehlt.').max(80),
   lastName: z.string().trim().min(1, 'Der Nachname fehlt.').max(80),
-  staffType: z.enum(['doctor', 'mfa', 'trainee']),
-  isPcm: z.boolean(),
+  staffType: STAFF_TYPE,
   employment: z.enum(['fulltime', 'parttime']),
   targetHoursPerWeek: z.number().min(0).max(80),
   canHomeoffice: z.boolean(),
@@ -43,15 +46,16 @@ export const employeeInputSchema = z.object({
 
 export const workAreaInputSchema = z
   .object({
-    plan: z.enum(['doctor', 'mfa']),
+    plan: PLAN_KIND,
     name: z.string().trim().min(1, 'Der Name fehlt.').max(80),
     description: z.string().max(500),
     kind: z.enum(['room', 'service', 'office', 'homeoffice', 'housecall']),
     isCritical: z.boolean(),
     minStaff: z.number().int().min(0).max(20),
     maxStaff: z.number().int().min(0).max(20).nullable(),
-    requiresHomeoffice: z.boolean(),
+    location: z.enum(['practice', 'home', 'any']).default('practice'),
     rotationMinPerWeek: z.number().int().min(0).max(10).nullable(),
+    followUpAreaId: z.string().nullable().default(null),
     icon: z.string().min(1).max(8),
     color: HEX_COLOR,
     sortOrder: z.number().int().min(0).max(9999),
@@ -77,6 +81,7 @@ export const skillInputSchema = z.object({
 export const dayBlockInputSchema = z
   .object({
     id: z.string().optional(),
+    plan: PLAN_KIND,
     weekday: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5)]),
     label: z.string().trim().min(1, 'Die Bezeichnung fehlt.').max(60),
     kind: z.enum(['consultation', 'backoffice', 'closed']),
@@ -89,9 +94,9 @@ export const dayBlockInputSchema = z
     path: ['endMin'],
   });
 
-/** Das gesamte Wochenmodell wird atomar ersetzt, nicht Block fuer Block. */
+/** Das Wochenmodell einer Gruppe wird atomar ersetzt, nicht Block fuer Block. */
 export const dayBlocksInputSchema = z.object({
-  blocks: z.array(dayBlockInputSchema).max(40),
+  blocks: z.array(dayBlockInputSchema).max(60),
 });
 
 export const matrixEntryInputSchema = z
@@ -141,6 +146,45 @@ export const holidaySettingsSchema = z.object({
   }),
   additionalClosedDates: z.array(ISO_DATE).max(200),
 });
+
+const WEIGHT = z.number().min(-100000).max(100000);
+
+export const planningSettingsSchema = z.object({
+  weights: z
+    .object({
+      requiredSeat: WEIGHT,
+      fillIdleBonus: WEIGHT,
+      templateMatch: WEIGHT,
+      stability: WEIGHT,
+      followUp: WEIGHT,
+      crossPlan: WEIGHT,
+      preferencePreferred: WEIGHT,
+      preferenceNeutral: WEIGHT,
+      preferenceDislike: WEIGHT,
+      preferenceNever: WEIGHT,
+      rotationUnmet: WEIGHT,
+      absenceRequested: WEIGHT,
+      fairness: WEIGHT,
+      workloadBalance: WEIGHT,
+    })
+    .partial(),
+  minOverlapRatio: z.number().min(0).max(1),
+  fairnessWeeks: z.number().int().min(0).max(52),
+});
+
+export const closureSchema = z
+  .object({
+    startDate: ISO_DATE,
+    endDate: ISO_DATE,
+    description: z.string().max(200).default(''),
+    skeletonStaff: z.number().int().min(0).max(20).default(0),
+    prepDays: z.number().int().min(0).max(20).default(2),
+    prepStaff: z.number().int().min(0).max(20).default(1),
+  })
+  .refine((input) => input.endDate >= input.startDate, {
+    message: 'Das Ende darf nicht vor dem Beginn liegen.',
+    path: ['endDate'],
+  });
 
 export const userInputSchema = z.object({
   username: z

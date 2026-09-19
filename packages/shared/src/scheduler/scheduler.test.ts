@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { generateWeekPlan } from './index.js';
 import {
   MONDAY,
+  afternoonBlocks,
   area,
   dayOff,
   employee,
@@ -11,6 +12,8 @@ import {
   planInput,
   workDay,
 } from './testFixtures.js';
+
+const TUESDAY = '2026-08-04';
 
 const onMonday = (
   result: { assignments: readonly { date: string; workAreaId: string; employeeId: string }[] },
@@ -68,6 +71,41 @@ describe('Verfügbarkeit', () => {
     const days = result.assignments.map((a) => a.date);
     expect(days).not.toContain('2026-08-05'); // Mittwoch
     expect(days).toHaveLength(4);
+  });
+});
+
+describe('Homeoffice-Tag', () => {
+  it('lässt an einem Homeoffice-Tag keinen Praxisbereich zu', () => {
+    const result = generateWeekPlan(
+      planInput({
+        employees: [
+          employee('zuhause', {
+            canHomeoffice: true,
+            workTimes: { ...fullWeek(), 1: workDay('08:00', '17:00', 60, 'home') },
+          }),
+        ],
+        workAreas: [area('labor')],
+      }),
+    );
+    expect(onMonday(result, 'labor')).toEqual([]);
+    expect(result.assignments.map((a) => a.date)).toContain(TUESDAY);
+    const diagnostic = result.diagnostics.find((d) => d.date === MONDAY);
+    expect(diagnostic?.message).toContain('im Homeoffice');
+  });
+
+  it('setzt sie am Homeoffice-Tag in Bereiche, die von zu Hause gehen', () => {
+    const result = generateWeekPlan(
+      planInput({
+        employees: [
+          employee('zuhause', {
+            canHomeoffice: true,
+            workTimes: { ...fullWeek(), 1: workDay('08:00', '17:00', 60, 'home') },
+          }),
+        ],
+        workAreas: [area('backoffice', { location: 'any' })],
+      }),
+    );
+    expect(onMonday(result, 'backoffice')).toEqual(['zuhause']);
   });
 });
 
@@ -191,7 +229,7 @@ describe('Qualifikationen, Homeoffice und Sperren', () => {
     const result = generateWeekPlan(
       planInput({
         employees: [employee('vorort'), employee('remote', { canHomeoffice: true })],
-        workAreas: [area('homeoffice', { requiresHomeoffice: true })],
+        workAreas: [area('homeoffice', { location: 'home' })],
       }),
     );
     expect(onMonday(result, 'homeoffice')).toEqual(['remote']);
@@ -243,6 +281,28 @@ describe('Abwesenheit und Schließtage', () => {
     expect(days).toHaveLength(3);
   });
 
+  it('sperrt bei einem halben Tag nur die betroffene Tageshälfte', () => {
+    const blocks = [...morningBlocks(), ...afternoonBlocks()];
+    const result = generateWeekPlan(
+      planInput({
+        dayBlocks: blocks,
+        employees: [employee('halbtags')],
+        workAreas: [area('backoffice', { blockIds: blocks.map((b) => b.id) })],
+        absences: [
+          {
+            employeeId: 'halbtags',
+            startDate: MONDAY,
+            endDate: MONDAY,
+            status: 'approved',
+            halfDay: 'am',
+          },
+        ],
+      }),
+    );
+    const montag = result.assignments.filter((a) => a.date === MONDAY).map((a) => a.dayBlockId);
+    expect(montag).toEqual(['blk-1-nm']);
+  });
+
   it('weicht beantragtem Urlaub aus, wenn es eine Alternative gibt', () => {
     const result = generateWeekPlan(
       planInput({
@@ -275,26 +335,61 @@ describe('Abwesenheit und Schließtage', () => {
   });
 });
 
-describe('PCM', () => {
-  it('sperrt die PCM in den Blöcken ihrer Sprechstunde', () => {
+describe('Gruppen', () => {
+  it('trennt die Gruppen: eine Ärztin landet nicht in der Anmeldung', () => {
     const result = generateWeekPlan(
       planInput({
-        employees: [employee('pcm', { isPcm: true })],
+        employees: [employee('arzt', { staffType: 'doctor' }), employee('mfa')],
         workAreas: [area('anmeldung')],
-        pcmBusy: [{ employeeId: 'pcm', date: MONDAY, dayBlockId: 'blk-1' }],
+      }),
+    );
+    expect(onMonday(result, 'anmeldung')).toEqual(['mfa']);
+  });
+
+  it('hält die PCM aus dem MFA-Pool heraus', () => {
+    const result = generateWeekPlan(
+      planInput({
+        employees: [employee('heidi', { staffType: 'pcm' })],
+        workAreas: [area('anmeldung')],
       }),
     );
     expect(onMonday(result, 'anmeldung')).toEqual([]);
-    // An den übrigen Tagen ist sie normal einsetzbar.
-    expect(result.assignments).toHaveLength(4);
-    const diagnostic = result.diagnostics.find(
-      (d) => d.kind === 'unfilled_required' && d.date === MONDAY,
-    );
-    expect(diagnostic?.message).toContain('PCM-Sprechstunde');
   });
-});
 
-describe('Zimmerkapazität der Ärzte', () => {
+  it('lässt die PCM mit ausdrücklicher Freigabe in einen MFA-Bereich', () => {
+    const result = generateWeekPlan(
+      planInput({
+        employees: [employee('heidi', { staffType: 'pcm' })],
+        workAreas: [area('anmeldung')],
+        matrix: [matrixEntry('heidi', 'anmeldung', { clearance: 'solo' })],
+      }),
+    );
+    expect(onMonday(result, 'anmeldung')).toEqual(['heidi']);
+    expect(result.assignments[0]?.reason).toContain('anderer Gruppe');
+  });
+
+  it('gibt der PCM zuerst ihren eigenen Bereich, bevor sie aushilft', () => {
+    const pcmBlocks = morningBlocks('pcm', '-pcm');
+    const result = generateWeekPlan(
+      planInput({
+        dayBlocks: [...morningBlocks(), ...pcmBlocks],
+        employees: [employee('heidi', { staffType: 'pcm' }), employee('mfa')],
+        workAreas: [
+          area('pcm-sprechstunde', {
+            plan: 'pcm',
+            minStaff: 0,
+            maxStaff: 1,
+            blockIds: pcmBlocks.map((b) => b.id),
+          }),
+          area('anmeldung', { minStaff: 1, maxStaff: 2 }),
+        ],
+        matrix: [matrixEntry('heidi', 'anmeldung', { clearance: 'solo' })],
+      }),
+    );
+    expect(onMonday(result, 'pcm-sprechstunde')).toEqual(['heidi']);
+    expect(onMonday(result, 'anmeldung')).toEqual(['mfa']);
+  });
+
   it('setzt nie mehr Sprechstunden an, als es Zimmer gibt', () => {
     const rooms = [1, 2, 3, 4].map((n) =>
       area(`zimmer-${n}`, { plan: 'doctor', kind: 'room', minStaff: 0, maxStaff: 1, sortOrder: n }),
@@ -304,7 +399,7 @@ describe('Zimmerkapazität der Ärzte', () => {
     );
 
     const result = generateWeekPlan(
-      planInput({ plan: 'doctor', employees: doctors, workAreas: rooms }),
+      planInput({ dayBlocks: morningBlocks('doctor'), employees: doctors, workAreas: rooms }),
     );
 
     const montags = result.assignments.filter((a) => a.date === MONDAY);
@@ -313,15 +408,28 @@ describe('Zimmerkapazität der Ärzte', () => {
     expect(new Set(montags.map((a) => a.workAreaId)).size).toBe(4);
   });
 
-  it('trennt die beiden Dienstpläne', () => {
+  it('hält eine Person über verschieden geschnittene Blöcke hinweg an einem Ort', () => {
+    // Ärzte: 08–11 und 11–13. Die PCM-Freigabe für ein MFA-Fenster 08–13
+    // darf nicht dazu führen, dass sie gleichzeitig an zwei Orten steht.
+    const mfaBlocks = morningBlocks();
+    const pcmBlocks = morningBlocks('pcm', '-pcm');
     const result = generateWeekPlan(
       planInput({
-        plan: 'mfa',
-        employees: [employee('arzt', { staffType: 'doctor' }), employee('mfa')],
-        workAreas: [area('anmeldung')],
+        dayBlocks: [...mfaBlocks, ...pcmBlocks],
+        employees: [employee('heidi', { staffType: 'pcm' })],
+        workAreas: [
+          area('pcm-sprechstunde', {
+            plan: 'pcm',
+            minStaff: 1,
+            maxStaff: 1,
+            blockIds: pcmBlocks.map((b) => b.id),
+          }),
+          area('anmeldung', { minStaff: 1, maxStaff: 1 }),
+        ],
+        matrix: [matrixEntry('heidi', 'anmeldung', { clearance: 'solo' })],
       }),
     );
-    expect(onMonday(result, 'anmeldung')).toEqual(['mfa']);
+    expect(result.assignments.filter((a) => a.date === MONDAY)).toHaveLength(1);
   });
 });
 
@@ -341,6 +449,20 @@ describe('Musterwoche und Rotation', () => {
     expect(onMonday(result, 'labor')).toEqual(['b']);
     expect(onMonday(result, 'anmeldung')).toEqual(['a']);
     expect(result.assignments.find((a) => a.date === MONDAY)?.source).toBe('template');
+  });
+
+  it('füllt einen Bereich aus der Musterwoche nicht über die Obergrenze', () => {
+    const result = generateWeekPlan(
+      planInput({
+        employees: [employee('a', { sortOrder: 1 }), employee('b', { sortOrder: 2 })],
+        workAreas: [area('labor', { minStaff: 1, maxStaff: 1 })],
+        template: [
+          { id: 't1', employeeId: 'a', workAreaId: 'labor', dayBlockId: 'blk-1' },
+          { id: 't2', employeeId: 'b', workAreaId: 'labor', dayBlockId: 'blk-1' },
+        ],
+      }),
+    );
+    expect(onMonday(result, 'labor')).toHaveLength(1);
   });
 
   it('erklärt, warum eine Vorlagenzeile diese Woche nicht greift', () => {
@@ -386,6 +508,31 @@ describe('Musterwoche und Rotation', () => {
     expect(result.diagnostics.filter((d) => d.kind === 'rotation_unmet')).toHaveLength(0);
   });
 
+  it('hält eine betreute Azubi für das Labor frei, statt sie in der Anmeldung zu verbrauchen', () => {
+    // Azubi darf nur mit Betreuung ins Labor (ein Platz ist Pflicht, zwei
+    // moeglich). Die Anmeldung braucht zwei, drei andere sind da.
+    const result = generateWeekPlan(
+      planInput({
+        employees: [
+          employee('azubi', { staffType: 'trainee', sortOrder: 1 }),
+          employee('a', { sortOrder: 2 }),
+          employee('b', { sortOrder: 3 }),
+          employee('c', { sortOrder: 4 }),
+        ],
+        workAreas: [
+          area('anmeldung', { minStaff: 2, maxStaff: 3, sortOrder: 1 }),
+          area('labor', { minStaff: 1, maxStaff: 2, rotationMinPerWeek: 1, sortOrder: 2 }),
+        ],
+        matrix: [matrixEntry('azubi', 'labor', { clearance: 'supervised' })],
+      }),
+    );
+    const laborTage = result.assignments.filter(
+      (a) => a.employeeId === 'azubi' && a.workAreaId === 'labor',
+    );
+    expect(laborTage.length).toBeGreaterThanOrEqual(1);
+    expect(result.diagnostics.filter((d) => d.kind === 'rotation_unmet')).toHaveLength(0);
+  });
+
   it('meldet eine nicht erfüllbare Pflichtrotation', () => {
     // Sechs Personen, aber nur fünf Labortage mit je einem Platz.
     const people = ['a', 'b', 'c', 'd', 'e', 'f'].map((id, index) =>
@@ -411,6 +558,51 @@ describe('Musterwoche und Rotation', () => {
       }),
     );
     expect(result.diagnostics.filter((d) => d.kind === 'rotation_unmet')).toHaveLength(0);
+  });
+});
+
+describe('Folgeaufgaben', () => {
+  it('gibt die Folgeaufgabe der Person vom Vortag', () => {
+    const result = generateWeekPlan(
+      planInput({
+        employees: [employee('a', { sortOrder: 1 }), employee('b', { sortOrder: 2 })],
+        workAreas: [
+          area('hausbesuche', { minStaff: 1, maxStaff: 1, sortOrder: 1, blockIds: ['blk-1'] }),
+          area('schreiben', {
+            minStaff: 1,
+            maxStaff: 1,
+            sortOrder: 2,
+            followUpAreaId: 'hausbesuche',
+            blockIds: ['blk-2'],
+          }),
+          area('anmeldung', { minStaff: 0, maxStaff: 2, sortOrder: 3 }),
+        ],
+        // Montag fährt b die Hausbesuche - obwohl die Sortierung a vorzöge.
+        pinned: [{ date: MONDAY, dayBlockId: 'blk-1', workAreaId: 'hausbesuche', employeeId: 'b' }],
+      }),
+    );
+    const dienstag = result.assignments.find(
+      (a) => a.date === TUESDAY && a.workAreaId === 'schreiben',
+    );
+    expect(dienstag?.employeeId).toBe('b');
+    expect(dienstag?.reason).toContain('Folgeaufgabe');
+  });
+
+  it('kennt die Vorwoche für den Montag', () => {
+    const result = generateWeekPlan(
+      planInput({
+        employees: [employee('a', { sortOrder: 1 }), employee('b', { sortOrder: 2 })],
+        workAreas: [
+          area('schreiben', { minStaff: 1, maxStaff: 1, followUpAreaId: 'hausbesuche' }),
+          area('anmeldung', { minStaff: 0, maxStaff: 2, sortOrder: 3 }),
+        ],
+        recent: [
+          // Freitag der Vorwoche.
+          { date: '2026-07-31', dayBlockId: 'x', workAreaId: 'hausbesuche', employeeId: 'b' },
+        ],
+      }),
+    );
+    expect(onMonday(result, 'schreiben')).toEqual(['b']);
   });
 });
 
@@ -451,6 +643,124 @@ describe('Gesperrte Zuweisungen', () => {
     );
     expect(onMonday(result, 'labor')).toEqual(['gepinnt']);
     expect(result.assignments.find((a) => a.date === MONDAY)?.source).toBe('manual');
+  });
+});
+
+describe('Umplanung', () => {
+  const previousWeek = (rows: [string, string][]) =>
+    rows.map(([employeeId, workAreaId]) => ({
+      date: MONDAY,
+      dayBlockId: 'blk-1',
+      workAreaId,
+      employeeId,
+    }));
+
+  it('behält die bisherige Woche, wenn nichts dagegen spricht', () => {
+    const result = generateWeekPlan(
+      planInput({
+        mode: 'replan',
+        employees: [employee('a', { sortOrder: 1 }), employee('b', { sortOrder: 2 })],
+        workAreas: [area('labor', { sortOrder: 1 }), area('anmeldung', { sortOrder: 2 })],
+        // Anders herum, als es die Sortierung ergäbe.
+        previous: previousWeek([
+          ['b', 'labor'],
+          ['a', 'anmeldung'],
+        ]),
+      }),
+    );
+    expect(onMonday(result, 'labor')).toEqual(['b']);
+    expect(onMonday(result, 'anmeldung')).toEqual(['a']);
+    expect(result.assignments.find((a) => a.date === MONDAY)?.source).toBe('kept');
+    expect(result.changes.filter((c) => c.date === MONDAY)).toHaveLength(0);
+  });
+
+  it('ersetzt nur die ausgefallene Person und meldet den Unterschied', () => {
+    const result = generateWeekPlan(
+      planInput({
+        mode: 'replan',
+        employees: [
+          employee('a', { sortOrder: 1 }),
+          employee('b', { sortOrder: 2 }),
+          employee('c', { sortOrder: 3 }),
+        ],
+        workAreas: [area('labor', { sortOrder: 1 }), area('anmeldung', { sortOrder: 2 })],
+        previous: previousWeek([
+          ['a', 'labor'],
+          ['b', 'anmeldung'],
+        ]),
+        absences: [
+          {
+            employeeId: 'a',
+            startDate: MONDAY,
+            endDate: MONDAY,
+            status: 'approved',
+            halfDay: null,
+          },
+        ],
+      }),
+    );
+    expect(onMonday(result, 'anmeldung')).toEqual(['b']);
+    expect(onMonday(result, 'labor')).toEqual(['c']);
+
+    const montags = result.changes.filter((c) => c.date === MONDAY);
+    expect(montags).toEqual([
+      expect.objectContaining({ kind: 'removed', employeeId: 'a', workAreaId: 'labor' }),
+      expect.objectContaining({ kind: 'added', employeeId: 'c', workAreaId: 'labor' }),
+    ]);
+    const dropped = result.diagnostics.find((d) => d.kind === 'dropped');
+    expect(dropped?.message).toContain('abwesend');
+  });
+
+  it('stellt einen Block um, wenn sonst ein Pflichtplatz offen bliebe', () => {
+    const result = generateWeekPlan(
+      planInput({
+        mode: 'replan',
+        employees: [employee('a', { sortOrder: 1 }), employee('b', { sortOrder: 2 })],
+        workAreas: [
+          area('labor', { minStaff: 1, maxStaff: 1, isCritical: true, sortOrder: 1 }),
+          area('backoffice', { minStaff: 0, maxStaff: 2, sortOrder: 2 }),
+        ],
+        previous: previousWeek([
+          ['a', 'labor'],
+          ['b', 'backoffice'],
+        ]),
+        absences: [
+          {
+            employeeId: 'a',
+            startDate: MONDAY,
+            endDate: MONDAY,
+            status: 'approved',
+            halfDay: null,
+          },
+        ],
+      }),
+    );
+    // b rückt vom Backoffice ins Labor.
+    expect(onMonday(result, 'labor')).toEqual(['b']);
+    expect(onMonday(result, 'backoffice')).toEqual([]);
+    expect(result.diagnostics.some((d) => d.kind === 'reshuffled' && d.date === MONDAY)).toBe(true);
+    expect(
+      result.diagnostics.filter((d) => d.kind === 'unfilled_required' && d.date === MONDAY),
+    ).toHaveLength(0);
+  });
+
+  it('lässt Blöcke ohne offenen Pflichtplatz unangetastet', () => {
+    const result = generateWeekPlan(
+      planInput({
+        mode: 'replan',
+        employees: [employee('a', { sortOrder: 1 }), employee('b', { sortOrder: 2 })],
+        workAreas: [
+          area('labor', { minStaff: 1, maxStaff: 1, sortOrder: 1 }),
+          area('backoffice', { minStaff: 0, maxStaff: 2, sortOrder: 2 }),
+        ],
+        previous: previousWeek([
+          ['b', 'labor'],
+          ['a', 'backoffice'],
+        ]),
+      }),
+    );
+    expect(result.changes.filter((c) => c.date === MONDAY)).toHaveLength(0);
+    expect(result.diagnostics.filter((d) => d.kind === 'reshuffled')).toHaveLength(0);
   });
 });
 
@@ -576,5 +886,77 @@ describe('Arbeitszeitmodell aus der Praxis', () => {
     expect(
       result.diagnostics.filter((d) => d.severity === 'error' && d.date === MONDAY),
     ).toHaveLength(0);
+  });
+
+  it('plant Ärzte mit Sprechstunde 08–11 und Infektsprechstunde 11–13', () => {
+    const doctorBlocks = [1, 2, 3, 4, 5].flatMap((weekday) => [
+      {
+        id: `doc-${weekday}-a`,
+        plan: 'doctor' as const,
+        weekday: weekday as 1,
+        label: 'Sprechstunde',
+        kind: 'consultation' as const,
+        startMin: 8 * 60,
+        endMin: 11 * 60,
+        sortOrder: 1,
+      },
+      {
+        id: `doc-${weekday}-b`,
+        plan: 'doctor' as const,
+        weekday: weekday as 1,
+        label: 'Infekt/Video',
+        kind: 'consultation' as const,
+        startMin: 11 * 60,
+        endMin: 13 * 60,
+        sortOrder: 2,
+      },
+    ]);
+    const early = doctorBlocks.filter((b) => b.id.endsWith('-a')).map((b) => b.id);
+    const late = doctorBlocks.filter((b) => b.id.endsWith('-b')).map((b) => b.id);
+
+    const result = generateWeekPlan(
+      planInput({
+        dayBlocks: doctorBlocks,
+        employees: [
+          employee('dr-a', { staffType: 'doctor', sortOrder: 1 }),
+          employee('dr-b', { staffType: 'doctor', sortOrder: 2 }),
+        ],
+        workAreas: [
+          area('zimmer-1', {
+            plan: 'doctor',
+            minStaff: 0,
+            maxStaff: 1,
+            blockIds: early,
+            sortOrder: 1,
+          }),
+          area('zimmer-2', {
+            plan: 'doctor',
+            minStaff: 0,
+            maxStaff: 1,
+            blockIds: early,
+            sortOrder: 2,
+          }),
+          area('infekt', {
+            plan: 'doctor',
+            minStaff: 1,
+            maxStaff: 1,
+            blockIds: late,
+            sortOrder: 3,
+          }),
+          area('video', { plan: 'doctor', minStaff: 1, maxStaff: 1, blockIds: late, sortOrder: 4 }),
+        ],
+      }),
+    );
+
+    const montags = result.assignments.filter((a) => a.date === MONDAY);
+    // Beide Ärzte früh in einem Zimmer, spät je einer in Infekt und Video.
+    expect(montags).toHaveLength(4);
+    expect(
+      montags
+        .filter((a) => a.dayBlockId === 'doc-1-b')
+        .map((a) => a.workAreaId)
+        .sort(),
+    ).toEqual(['infekt', 'video']);
+    expect(result.diagnostics.filter((d) => d.kind === 'unfilled_required')).toHaveLength(0);
   });
 });

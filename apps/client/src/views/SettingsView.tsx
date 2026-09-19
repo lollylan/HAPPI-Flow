@@ -1,9 +1,16 @@
 import { useState } from 'react';
-import { CalendarOff, Check, Loader2, Plus, Trash2 } from 'lucide-react';
-import type { GermanState, HolidaySettings } from '@haeppi/shared';
-import { GERMAN_STATES, holidaysForYear, isIsoDate } from '@haeppi/shared';
+import { CalendarOff, Check, Loader2, Plus, SlidersHorizontal, Trash2 } from 'lucide-react';
+import type { GermanState, HolidaySettings, SchedulerWeights } from '@haeppi/shared';
+import {
+  DEFAULT_WEIGHTS,
+  GERMAN_STATES,
+  WEIGHT_LABELS,
+  holidaysForYear,
+  isIsoDate,
+} from '@haeppi/shared';
 import { ApiError } from '../api/client';
-import { useSaveHolidaySettings, useSettings } from '../api/queries';
+import type { PracticeSettings } from '../api/queries';
+import { useSaveHolidaySettings, useSavePlanningSettings, useSettings } from '../api/queries';
 import { Button, Card, ErrorNote, Field, PageHeader, Select, TextInput } from '../components/ui';
 
 /** Bundeslaender, in denen einzelne Tage von der Gemeinde abhaengen. */
@@ -26,7 +33,107 @@ export function SettingsView() {
 
   // Das Formular bekommt den gespeicherten Stand als Anfangswert. So braucht
   // es keinen Effect, der den Entwurf nachtraeglich aus der Abfrage befuellt.
-  return <HolidayForm saved={settings.holidays} />;
+  return (
+    <>
+      <HolidayForm saved={settings.holidays} />
+      <PlanningForm saved={settings} />
+    </>
+  );
+}
+
+/**
+ * Gewichte des Schedulers. Sie stehen bewusst in der Datenbank statt im
+ * Code - wer die Praxis kennt, soll drehen koennen, ohne zu bauen.
+ */
+function PlanningForm({ saved }: { saved: PracticeSettings }) {
+  const save = useSavePlanningSettings();
+  const [weights, setWeights] = useState<SchedulerWeights>({
+    ...DEFAULT_WEIGHTS,
+    ...saved.weights,
+  });
+  const [minOverlapRatio, setMinOverlapRatio] = useState(saved.minOverlapRatio);
+  const [fairnessWeeks, setFairnessWeeks] = useState(saved.fairnessWeeks);
+
+  const dirty =
+    JSON.stringify(weights) !== JSON.stringify({ ...DEFAULT_WEIGHTS, ...saved.weights }) ||
+    minOverlapRatio !== saved.minOverlapRatio ||
+    fairnessWeeks !== saved.fairnessWeeks;
+  const message = save.error instanceof ApiError ? save.error.message : null;
+
+  return (
+    <div className="px-8 pb-8">
+      <Card className="p-5">
+        <div className="mb-4 flex items-start justify-between gap-4">
+          <div>
+            <h2 className="flex items-center gap-2 font-medium">
+              <SlidersHorizontal className="size-4 text-slate-400" />
+              Planung
+            </h2>
+            <p className="text-sm text-slate-500 dark:text-slate-400">
+              Negative Werte sind erwünscht, positive unerwünscht. Die Reihenfolge der Beträge
+              entscheidet: ein Pflichtplatz wiegt mehr als jede Vorliebe, die bisherige Woche mehr
+              als die Musterwoche.
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <Button onClick={() => setWeights({ ...DEFAULT_WEIGHTS })}>Standard</Button>
+            <Button
+              variant="primary"
+              disabled={!dirty || save.isPending}
+              onClick={() => save.mutate({ weights, minOverlapRatio, fairnessWeeks })}
+            >
+              {save.isPending ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Check className="size-4" />
+              )}
+              Speichern
+            </Button>
+          </div>
+        </div>
+
+        <div className="grid gap-x-6 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
+          {(Object.keys(WEIGHT_LABELS) as (keyof SchedulerWeights)[]).map((key) => (
+            <Field key={key} label={WEIGHT_LABELS[key]}>
+              <TextInput
+                type="number"
+                step={10}
+                value={weights[key]}
+                onChange={(event) => setWeights({ ...weights, [key]: Number(event.target.value) })}
+              />
+            </Field>
+          ))}
+          <Field
+            label="Mindestüberdeckung eines Blocks"
+            hint="0,5 = wer die Hälfte des Zeitfensters da ist, kann eingeteilt werden."
+          >
+            <TextInput
+              type="number"
+              min={0}
+              max={1}
+              step={0.05}
+              value={minOverlapRatio}
+              onChange={(event) => setMinOverlapRatio(Number(event.target.value))}
+            />
+          </Field>
+          <Field label="Ausgleich über Wochen" hint="Wie viele Vorwochen für die Fairness zählen.">
+            <TextInput
+              type="number"
+              min={0}
+              max={52}
+              value={fairnessWeeks}
+              onChange={(event) => setFairnessWeeks(Number(event.target.value))}
+            />
+          </Field>
+        </div>
+        {message && (
+          <div className="mt-4">
+            <ErrorNote>{message}</ErrorNote>
+          </div>
+        )}
+      </Card>
+    </div>
+  );
 }
 
 function HolidayForm({ saved }: { saved: HolidaySettings }) {

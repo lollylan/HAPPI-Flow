@@ -15,6 +15,13 @@ export type AbsenceStatus = 'requested' | 'approved' | 'rejected';
 
 export type HalfDay = 'am' | 'pm';
 
+/**
+ * Grenze zwischen Vormittag und Nachmittag fuer halbe Abwesenheitstage.
+ * Ein Block, der vor 13:00 beginnt, zaehlt zum Vormittag; einer, der nach
+ * 13:00 endet, zum Nachmittag. Der Innendienst 13-16 ist damit Nachmittag.
+ */
+export const HALF_DAY_SPLIT_MIN = 13 * 60;
+
 export const ABSENCE_TYPE_LABELS: Readonly<Record<AbsenceType, string>> = {
   vacation: 'Urlaub',
   sick: 'Krank',
@@ -80,12 +87,31 @@ export interface RecurringAbsence {
   readonly note: string;
 }
 
-/** Praxisschliessung, z. B. Betriebsurlaub zwischen den Jahren. */
+/**
+ * Praxisschliessung, z. B. Betriebsurlaub zwischen den Jahren.
+ *
+ * Waehrend der Schliessung hat das Team Urlaub. Eine Notbesetzung bleibt
+ * an allen Tagen (`skeletonStaff`, meist 0) und an den letzten
+ * `prepDays` Arbeitstagen vor der Wiedereroeffnung (`prepStaff`, meist
+ * 1-2), um Post, Rezepte und Befunde aufzuarbeiten.
+ */
 export interface Closure {
   readonly id: Id;
   readonly startDate: IsoDate;
   readonly endDate: IsoDate;
   readonly description: string;
-  /** Wie viele Personen als Notbesetzung anwesend bleiben. */
+  /** Notbesetzung an allen Schliesstagen. */
   readonly skeletonStaff: number;
+  /** So viele Arbeitstage vor dem Ende sind Vorbereitungstage. */
+  readonly prepDays: number;
+  /** Besetzung an den Vorbereitungstagen. */
+  readonly prepStaff: number;
+}
+
+/** Wer an einem Schliesstag als Notbesetzung da ist. */
+export interface ClosureDuty {
+  readonly id: Id;
+  readonly closureId: Id;
+  readonly employeeId: Id;
+  readonly date: IsoDate;
 }

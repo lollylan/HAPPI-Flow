@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { AreaKind, Id, PlanKind, WorkArea } from '@haeppi/shared';
+import type { AreaKind, AreaLocation, Id, PlanKind, WorkArea } from '@haeppi/shared';
 import type { Db } from '../index.js';
 
 interface WorkAreaRow {
@@ -11,8 +11,9 @@ interface WorkAreaRow {
   is_critical: number;
   min_staff: number;
   max_staff: number | null;
-  requires_homeoffice: number;
+  location: AreaLocation;
   rotation_min_per_week: number | null;
+  follow_up_area_id: string | null;
   icon: string;
   color: string;
   sort_order: number;
@@ -34,8 +35,9 @@ function toWorkArea(
     isCritical: row.is_critical === 1,
     minStaff: row.min_staff,
     maxStaff: row.max_staff,
-    requiresHomeoffice: row.requires_homeoffice === 1,
+    location: row.location,
     rotationMinPerWeek: row.rotation_min_per_week,
+    followUpAreaId: row.follow_up_area_id,
     icon: row.icon,
     color: row.color,
     sortOrder: row.sort_order,
@@ -56,11 +58,13 @@ function groupBy(rows: readonly { area: string; value: string }[]): Map<string, 
   return map;
 }
 
+const PLAN_ORDER = `CASE plan WHEN 'doctor' THEN 0 WHEN 'pcm' THEN 1 ELSE 2 END`;
+
 export function listWorkAreas(db: Db, includeInactive = false): WorkArea[] {
   const rows = db
     .prepare(
       `SELECT * FROM work_areas ${includeInactive ? '' : 'WHERE is_active = 1'}
-        ORDER BY plan, sort_order, name`,
+        ORDER BY ${PLAN_ORDER}, sort_order, name`,
     )
     .all() as WorkAreaRow[];
 
@@ -144,9 +148,9 @@ export function createWorkArea(db: Db, input: WorkAreaInput): WorkArea {
   db.transaction(() => {
     db.prepare(
       `INSERT INTO work_areas
-         (id, plan, name, description, kind, is_critical, min_staff, max_staff,
-          requires_homeoffice, rotation_min_per_week, icon, color, sort_order, is_active)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, plan, name, description, kind, is_critical, min_staff, max_staff, location,
+          rotation_min_per_week, follow_up_area_id, icon, color, sort_order, is_active)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       id,
       input.plan,
@@ -156,8 +160,9 @@ export function createWorkArea(db: Db, input: WorkAreaInput): WorkArea {
       input.isCritical ? 1 : 0,
       input.minStaff,
       input.maxStaff,
-      input.requiresHomeoffice ? 1 : 0,
+      input.location,
       input.rotationMinPerWeek,
+      input.followUpAreaId,
       input.icon,
       input.color,
       input.sortOrder,
@@ -177,8 +182,8 @@ export function updateWorkArea(db: Db, id: Id, input: WorkAreaInput): WorkArea |
       .prepare(
         `UPDATE work_areas
             SET plan = ?, name = ?, description = ?, kind = ?, is_critical = ?,
-                min_staff = ?, max_staff = ?, requires_homeoffice = ?,
-                rotation_min_per_week = ?, icon = ?, color = ?, sort_order = ?, is_active = ?
+                min_staff = ?, max_staff = ?, location = ?, rotation_min_per_week = ?,
+                follow_up_area_id = ?, icon = ?, color = ?, sort_order = ?, is_active = ?
           WHERE id = ?`,
       )
       .run(
@@ -189,8 +194,10 @@ export function updateWorkArea(db: Db, id: Id, input: WorkAreaInput): WorkArea |
         input.isCritical ? 1 : 0,
         input.minStaff,
         input.maxStaff,
-        input.requiresHomeoffice ? 1 : 0,
+        input.location,
         input.rotationMinPerWeek,
+        // Ein Bereich kann nicht seine eigene Folgeaufgabe sein.
+        input.followUpAreaId === id ? null : input.followUpAreaId,
         input.icon,
         input.color,
         input.sortOrder,

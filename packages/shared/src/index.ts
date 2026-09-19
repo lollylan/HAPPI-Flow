@@ -18,3 +18,5 @@ export * from './hours/vacation.js';
 export * from './hours/balance.js';
 
 export * from './scheduler/index.js';
+export * from './scheduler/coverage.js';
+export * from './scheduler/closure.js';

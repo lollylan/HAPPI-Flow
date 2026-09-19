@@ -1,4 +1,5 @@
 import type { Id, Minutes, PracticeWeekday } from './common.js';
+import type { PlanKind } from './workArea.js';
 
 /**
  * Art eines Tagesblocks.
@@ -18,8 +19,15 @@ export const BLOCK_KIND_LABELS: Readonly<Record<BlockKind, string>> = {
   closed: 'Geschlossen',
 };
 
+/**
+ * Ein Zeitfenster eines Wochentags - **je Gruppe**. Die Aerzte teilen den
+ * Vormittag in Sprechstunde (08-11) und Infekt-/Videosprechstunde (11-13),
+ * die MFA arbeiten durchgehend 08-13. Deshalb hat jede Gruppe ihr eigenes
+ * Zeitmodell; Ueberschneidungen sind nur innerhalb einer Gruppe verboten.
+ */
 export interface DayBlock {
   readonly id: Id;
+  readonly plan: PlanKind;
   readonly weekday: PracticeWeekday;
   readonly label: string;
   readonly kind: BlockKind;

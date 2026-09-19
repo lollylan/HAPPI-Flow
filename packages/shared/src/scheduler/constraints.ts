@@ -4,7 +4,9 @@ import type { DayBlock } from '../types/dayBlock.js';
 import type { MatrixEntry } from '../types/matrix.js';
 import type { WorkArea } from '../types/workArea.js';
 import { planForStaffType } from '../types/employee.js';
-import { coverageRatio } from '../time/minutes.js';
+import { HALF_DAY_SPLIT_MIN } from '../types/absence.js';
+import type { TimeInterval } from '../time/minutes.js';
+import { coverageRatio, intervalsOverlap } from '../time/minutes.js';
 import { isoWeekday, isWithinRange } from '../time/dates.js';
 import type { AbsenceSpan, PlanEmployee, RejectionCode } from './types.js';
 
@@ -14,34 +16,50 @@ export interface SeatSlot {
   readonly area: WorkArea;
 }
 
+/** Ein bereits belegtes Zeitfenster einer Person. */
+export interface OccupiedSpan extends TimeInterval {
+  readonly date: IsoDate;
+}
+
 export interface EligibilityContext {
-  /** Bereits belegte (Datum|Block)-Kombinationen der Person. */
-  readonly occupiedBlocks: ReadonlySet<string>;
+  /** Bereits belegte Zeitfenster der Person. */
+  readonly occupied: readonly OccupiedSpan[];
   /** Einsaetze der Person je Bereich in dieser Woche. */
   readonly weekCounts: ReadonlyMap<string, number>;
   readonly matrix: ReadonlyMap<string, MatrixEntry>;
   readonly absences: readonly AbsenceSpan[];
-  readonly pcmBusy: ReadonlySet<string>;
   readonly minOverlapRatio: number;
 }
 
 export const blockKey = (date: IsoDate, dayBlockId: Id): string => `${date}|${dayBlockId}`;
 export const areaKey = (employeeId: Id, workAreaId: Id): string => `${employeeId}|${workAreaId}`;
 
-/** Genehmigte Abwesenheit an diesem Tag - sperrt hart. */
+/**
+ * Ob eine Abwesenheit den Block trifft. Ein halber Tag sperrt nur die
+ * Bloecke seiner Tageshaelfte: "vormittags frei" laesst den Nachmittag zu.
+ */
+export function absenceCoversBlock(
+  absence: Pick<AbsenceSpan, 'halfDay'>,
+  block: Pick<DayBlock, 'startMin' | 'endMin'>,
+): boolean {
+  if (absence.halfDay === null) return true;
+  if (absence.halfDay === 'am') return block.startMin < HALF_DAY_SPLIT_MIN;
+  return block.endMin > HALF_DAY_SPLIT_MIN;
+}
+
+/** Genehmigte Abwesenheit in diesem Block - sperrt hart. */
 export function hasApprovedAbsence(
   absences: readonly AbsenceSpan[],
   employeeId: Id,
   date: IsoDate,
+  block: Pick<DayBlock, 'startMin' | 'endMin'>,
 ): boolean {
   return absences.some(
     (absence) =>
       absence.employeeId === employeeId &&
       absence.status === 'approved' &&
-      // Halbtags sperrt den Tag nicht komplett; die Feinheit greift erst,
-      // wenn die Blockzeiten mit der Tageshaelfte abgeglichen werden.
-      absence.halfDay === null &&
-      isWithinRange(date, absence.startDate, absence.endDate),
+      isWithinRange(date, absence.startDate, absence.endDate) &&
+      absenceCoversBlock(absence, block),
   );
 }
 
@@ -50,13 +68,24 @@ export function hasRequestedAbsence(
   absences: readonly AbsenceSpan[],
   employeeId: Id,
   date: IsoDate,
+  block: Pick<DayBlock, 'startMin' | 'endMin'>,
 ): boolean {
   return absences.some(
     (absence) =>
       absence.employeeId === employeeId &&
       absence.status === 'requested' &&
-      isWithinRange(date, absence.startDate, absence.endDate),
+      isWithinRange(date, absence.startDate, absence.endDate) &&
+      absenceCoversBlock(absence, block),
   );
+}
+
+/** Ob die Person in diesem Zeitfenster schon woanders steht. */
+export function isOccupied(
+  occupied: readonly OccupiedSpan[],
+  date: IsoDate,
+  block: TimeInterval,
+): boolean {
+  return occupied.some((span) => span.date === date && intervalsOverlap(span, block));
 }
 
 /**
@@ -76,7 +105,14 @@ export function checkEligibility(
   slot: SeatSlot,
   context: EligibilityContext,
 ): RejectionCode | null {
-  if (planForStaffType(employee.staffType) !== slot.area.plan) return 'WRONG_PLAN';
+  const entry = context.matrix.get(areaKey(employee.id, slot.area.id));
+
+  // Fremde Gruppe nur mit ausdruecklicher Freigabe in der Einsatz-Matrix:
+  // so kann die PCM fuer einen einzelnen MFA-Bereich freigegeben sein,
+  // ohne zum MFA-Pool zu gehoeren.
+  if (planForStaffType(employee.staffType) !== slot.area.plan) {
+    if (!entry || entry.clearance === 'blocked') return 'WRONG_PLAN';
+  }
 
   const weekday = isoWeekday(slot.date);
   if (!isPracticeWeekday(weekday)) return 'NOT_WORKING';
@@ -91,23 +127,20 @@ export function checkEligibility(
     return 'INSUFFICIENT_OVERLAP';
   }
 
-  if (hasApprovedAbsence(context.absences, employee.id, slot.date)) return 'ABSENT';
+  if (hasApprovedAbsence(context.absences, employee.id, slot.date, slot.block)) return 'ABSENT';
 
-  if (context.occupiedBlocks.has(blockKey(slot.date, slot.block.id))) return 'ALREADY_ASSIGNED';
+  if (isOccupied(context.occupied, slot.date, slot.block)) return 'ALREADY_ASSIGNED';
 
-  // Die PCM haelt in diesem Zeitfenster Sprechstunde und faellt damit aus
-  // dem MFA-Pool - sie kann nicht an zwei Orten sein.
-  if (employee.isPcm && context.pcmBusy.has(blockKey(slot.date, slot.block.id))) {
-    return 'PCM_BUSY';
+  // Homeoffice-Tag: nur Bereiche, die von zu Hause gehen.
+  if (workTime.location === 'home' && slot.area.location === 'practice') {
+    return 'WRONG_LOCATION';
   }
-
-  if (slot.area.requiresHomeoffice && !employee.canHomeoffice) return 'NO_HOMEOFFICE';
+  if (slot.area.location === 'home' && !employee.canHomeoffice) return 'NO_HOMEOFFICE';
 
   for (const skillId of slot.area.requiredSkillIds) {
     if (!employee.skillIds.includes(skillId)) return 'MISSING_SKILL';
   }
 
-  const entry = context.matrix.get(areaKey(employee.id, slot.area.id));
   if (entry?.clearance === 'blocked') return 'BLOCKED';
 
   const maxPerWeek = entry?.maxPerWeek ?? null;

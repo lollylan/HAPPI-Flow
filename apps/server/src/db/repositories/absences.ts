@@ -4,6 +4,7 @@ import type {
   AbsenceStatus,
   AbsenceType,
   Closure,
+  ClosureDuty,
   HalfDay,
   Id,
   IsoDate,
@@ -178,29 +179,148 @@ export function deleteRecurringAbsence(db: Db, id: Id): boolean {
 
 // ------------------------------------------------------------ Schliesszeiten --
 
+interface ClosureRow {
+  id: string;
+  start_date: string;
+  end_date: string;
+  description: string;
+  skeleton_staff: number;
+  prep_days: number;
+  prep_staff: number;
+}
+
+const toClosure = (row: ClosureRow): Closure => ({
+  id: row.id,
+  startDate: row.start_date,
+  endDate: row.end_date,
+  description: row.description,
+  skeletonStaff: row.skeleton_staff,
+  prepDays: row.prep_days,
+  prepStaff: row.prep_staff,
+});
+
 export function listClosures(db: Db): Closure[] {
+  return (db.prepare(`SELECT * FROM closures ORDER BY start_date`).all() as ClosureRow[]).map(
+    toClosure,
+  );
+}
+
+export function getClosure(db: Db, id: Id): Closure | null {
+  const row = db.prepare(`SELECT * FROM closures WHERE id = ?`).get(id) as ClosureRow | undefined;
+  return row ? toClosure(row) : null;
+}
+
+/** Schliesszeiten, die einen Zeitraum beruehren. */
+export function listClosuresInRange(db: Db, from: IsoDate, to: IsoDate): Closure[] {
   return (
-    db.prepare(`SELECT * FROM closures ORDER BY start_date`).all() as Record<string, unknown>[]
-  ).map((row) => ({
-    id: row.id as string,
-    startDate: row.start_date as string,
-    endDate: row.end_date as string,
-    description: row.description as string,
-    skeletonStaff: row.skeleton_staff as number,
-  }));
+    db
+      .prepare(`SELECT * FROM closures WHERE start_date <= ? AND end_date >= ? ORDER BY start_date`)
+      .all(to, from) as ClosureRow[]
+  ).map(toClosure);
 }
 
 export function createClosure(db: Db, input: Omit<Closure, 'id'>): Closure {
   const id = randomUUID();
   db.prepare(
-    `INSERT INTO closures (id, start_date, end_date, description, skeleton_staff)
-     VALUES (?, ?, ?, ?, ?)`,
-  ).run(id, input.startDate, input.endDate, input.description, input.skeletonStaff);
+    `INSERT INTO closures
+       (id, start_date, end_date, description, skeleton_staff, prep_days, prep_staff)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    id,
+    input.startDate,
+    input.endDate,
+    input.description,
+    input.skeletonStaff,
+    input.prepDays,
+    input.prepStaff,
+  );
   return { id, ...input };
+}
+
+export function updateClosure(db: Db, id: Id, input: Omit<Closure, 'id'>): Closure | null {
+  const result = db
+    .prepare(
+      `UPDATE closures
+          SET start_date = ?, end_date = ?, description = ?, skeleton_staff = ?,
+              prep_days = ?, prep_staff = ?
+        WHERE id = ?`,
+    )
+    .run(
+      input.startDate,
+      input.endDate,
+      input.description,
+      input.skeletonStaff,
+      input.prepDays,
+      input.prepStaff,
+      id,
+    );
+  return result.changes > 0 ? getClosure(db, id) : null;
 }
 
 export function deleteClosure(db: Db, id: Id): boolean {
   return db.prepare(`DELETE FROM closures WHERE id = ?`).run(id).changes > 0;
+}
+
+// ------------------------------------------------------------ Notbesetzung --
+
+interface DutyRow {
+  id: string;
+  closure_id: string;
+  employee_id: string;
+  date: string;
+  kind: 'prep' | 'skeleton';
+}
+
+const toDuty = (row: DutyRow): ClosureDuty => ({
+  id: row.id,
+  closureId: row.closure_id,
+  employeeId: row.employee_id,
+  date: row.date,
+});
+
+export function listClosureDuties(db: Db, closureId: Id): ClosureDuty[] {
+  return (
+    db
+      .prepare(`SELECT * FROM closure_duties WHERE closure_id = ? ORDER BY date, employee_id`)
+      .all(closureId) as DutyRow[]
+  ).map(toDuty);
+}
+
+export function listDutiesInRange(db: Db, from: IsoDate, to: IsoDate): ClosureDuty[] {
+  return (
+    db
+      .prepare(`SELECT * FROM closure_duties WHERE date BETWEEN ? AND ? ORDER BY date, employee_id`)
+      .all(from, to) as DutyRow[]
+  ).map(toDuty);
+}
+
+/** Bisherige Notdienst-Tage je Person - Grundlage der fairen Rotation. */
+export function dutyHistory(db: Db, before: IsoDate): { employeeId: Id; days: number }[] {
+  return (
+    db
+      .prepare(
+        `SELECT employee_id, COUNT(*) AS n FROM closure_duties
+          WHERE date < ? GROUP BY employee_id`,
+      )
+      .all(before) as { employee_id: string; n: number }[]
+  ).map((row) => ({ employeeId: row.employee_id, days: row.n }));
+}
+
+export function replaceClosureDuties(
+  db: Db,
+  closureId: Id,
+  duties: readonly { employeeId: Id; date: IsoDate; kind: 'prep' | 'skeleton' }[],
+): void {
+  db.transaction(() => {
+    db.prepare(`DELETE FROM closure_duties WHERE closure_id = ?`).run(closureId);
+    const insert = db.prepare(
+      `INSERT OR IGNORE INTO closure_duties (id, closure_id, employee_id, date, kind)
+       VALUES (?, ?, ?, ?, ?)`,
+    );
+    for (const duty of duties) {
+      insert.run(randomUUID(), closureId, duty.employeeId, duty.date, duty.kind);
+    }
+  })();
 }
 
 // ------------------------------------------------------------ Urlaubskonto --

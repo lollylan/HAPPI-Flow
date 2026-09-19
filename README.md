@@ -6,14 +6,29 @@ Keine Cloud, keine Registrierung, keine Internetverbindung nötig.
 
 ## Was die Anwendung kann
 
-**Zwei getrennte Dienstpläne** für Ärzte und MFA, die sich an einer Stelle berühren:
-die Primary Care Managerin hält Sprechstunde wie eine Ärztin, belegt dabei eines der
-vier Behandlungszimmer und ist solange aus dem MFA-Pool gesperrt.
+**Ein Dienstplan für alle** – Ärzte, PCM und MFA stehen untereinander auf einem Blatt.
+Jede Gruppe hat ihr eigenes Zeitmodell: die Ärzte teilen den Vormittag in Sprechstunde
+(08–11) und Infekt-/Videosprechstunde (11–13), die MFA arbeiten durchgehend 08–13, danach
+Innendienst und Nachmittagssprechstunde. Die Primary Care Managerin ist eine eigene Gruppe
+mit eigener Sprechstunde und eigenen Hausbesuchen; für einzelne MFA-Bereiche lässt sie sich
+gezielt freigeben.
 
-**Automatische Wochenplanung** aus einer gepflegten Musterwoche. Kritische Bereiche
-(Anmeldung, Labor vormittags) werden zuerst besetzt, Pflichtrotationen eingehalten
-(»jede MFA einmal pro Woche ins Labor«), Vorlieben berücksichtigt und niemand bleibt
-ohne Aufgabe.
+**Musterwoche als Basis.** Wer ist normalerweise wo – das steht einmal in der Musterwoche,
+und jede Woche entsteht daraus. Eine gelungene Woche lässt sich mit einem Klick als neue
+Musterwoche übernehmen.
+
+**Umplanung statt Neuplanung.** Fällt jemand aus, wird der Plan nicht stillschweigend
+umgeworfen. Die Anwendung rechnet einen Umplanungsvorschlag, der nur die betroffenen Plätze
+anfasst, und legt ihn der Praxisleitung vor: was entfällt, was neu ist, ob Pflichtplätze
+offen bleiben. Erst mit »Übernehmen« wird er zum Plan. Ein Block wird nur dann umgestellt,
+wenn dadurch mehr Pflichtplätze besetzt werden.
+
+**Automatische Planung** je Zeitfenster als exaktes Zuordnungsproblem: kritische Bereiche
+(Anmeldung, Labor, Telefon) werden zuerst besetzt, Pflichtrotationen eingehalten (»jede MFA
+einmal pro Woche ins Labor«), Vorlieben berücksichtigt, Folgeaufgaben an dieselbe Person
+gegeben (»Hausbesuche schreiben« an die, die gestern gefahren ist), und niemand bleibt ohne
+Aufgabe. Homeoffice-Tage sind Teil des Arbeitszeitmodells: wer mittwochs von zu Hause
+arbeitet, bekommt an dem Tag nur Bereiche, die von zu Hause gehen.
 
 **Nachvollziehbarkeit.** Für jeden unbesetzten Pflichtplatz nennt die Anwendung den
 Grund, statt still zu versagen:
@@ -22,20 +37,36 @@ Grund, statt still zu versagen:
 > 6 arbeiten mittwochs nicht, 3 abwesend, 2 ohne eigenständige Freigabe,
 > 1 bereits in der Anmeldung gebunden.
 
+Die Auswertung jedes Planungslaufs bleibt gespeichert und ist jederzeit im Dienstplan
+abrufbar.
+
 **Einsatz-Matrix** statt starrer Rollenlogik: für jede Kombination aus Person und
 Bereich lässt sich Freigabe (eigenständig / nur mit Betreuung / gesperrt), Vorliebe
 und ein Wochen-Minimum und -Maximum setzen. Von zwei Auszubildenden darf so die eine
 allein ins Labor und der andere nicht.
 
+**Urlaub mit Antragsprüfung.** Beim Beantragen und beim Genehmigen zeigt die Anwendung Tag
+für Tag, wie viele Personen der Gruppe noch da wären und was die kritischen Bereiche
+brauchen. Halbe Tage sperren nur die betroffene Tageshälfte.
+
+**Praxisschließzeiten.** Alle haben Urlaub, eine Notbesetzung bereitet die letzten Tage vor
+der Wiedereröffnung vor. Die Verteilung rotiert fair über frühere Schließungen, achtet auf
+Urlaubswünsche und trägt nach Bestätigung Urlaub und Notdienste für alle ein.
+
 **Selbstverwaltung.** Mitarbeiter beantragen Urlaub und tragen Krankmeldungen selbst
 ein. Kolleginnen sehen nur »abwesend«; den Grund sieht ausschließlich die Praxisleitung.
 
-**Druck.** Übersichtsplan fürs schwarze Brett (A4 quer) und persönlicher Wochenplan
-je Mitarbeiter (A4 hoch), beides als echter Text.
+**Druck.** Übersichtsplan fürs schwarze Brett (A4 quer, alle Gruppen) und persönlicher
+Wochenplan je Mitarbeiter (A4 hoch), beides als echter Text.
 
 ## Betrieb in der Praxis
 
-Ein Doppelklick auf `HÄPPI-Flow` startet die Anwendung samt internem Dienst. Andere
+Ein Doppelklick auf `HÄPPI-Flow` startet die Anwendung samt internem Dienst.
+
+Ohne Installer geht es auch direkt aus dem Projektordner: ein Doppelklick auf
+`start-server.bat` baut die Anwendung beim ersten Mal, startet den Server und öffnet
+`http://localhost:4173` im Browser. Das Fenster bleibt offen, solange der Server läuft.
+`start-server.bat dev` benutzt stattdessen die Testdaten unter `%APPDATA%\HAEPPI-Flow\dev\`. Andere
 Rechner im Praxisnetz erreichen sie im Browser unter `http://<IP des Praxis-PCs>:4173` –
 die genaue Adresse steht im Menü unter _Hilfe → Zugang im Praxisnetz_.
 
@@ -49,11 +80,22 @@ Projektverzeichnis und nie im Installer.
 
 ### Zugang wiederherstellen
 
-Falls das Passwort der Praxisleitung verloren geht:
+Falls das Passwort der Praxisleitung verloren geht, der einfachste Weg aus dem
+Projektordner: Serverfenster schließen und
+
+```bash
+start-server.bat reset
+```
+
+Die neuen Zugangsdaten erscheinen im Serverfenster unter „ZUGANG WURDE ZURÜCKGESETZT“.
+Beim Anmelden muss das Passwort geändert werden.
+
+Für die installierte App geht es über eine Datei:
 
 1. HÄPPI-Flow schließen.
 2. Im Ordner `%APPDATA%\HAEPPI-Flow\` eine leere Datei namens
-   **`ZUGANG-ZURUECKSETZEN.txt`** anlegen.
+   **`ZUGANG-ZURUECKSETZEN.txt`** anlegen (Groß-/Kleinschreibung und eine vom
+   Explorer angehängte zweite Endung sind egal).
 3. HÄPPI-Flow starten. Das neue Passwort steht in `server.log` im selben Ordner,
    ganz unten unter „ZUGANG WURDE ZURÜCKGESETZT“. Beim Anmelden muss es geändert
    werden.
@@ -86,6 +128,13 @@ npm test
 ```
 
 ```bash
+npx tsx apps/server/scripts/seed-dev-team.ts
+```
+
+Legt ein Beispielteam in der Entwicklungsdatenbank an (nie in der Praxisdatenbank), um die
+Oberfläche mit realistischen Daten auszuprobieren.
+
+```bash
 npm run check
 ```
 
@@ -110,14 +159,26 @@ Baut alles und erzeugt `release/HAEPPI-Flow-Setup-2.0.0.exe`.
 
 Liegt in `packages/shared/src/scheduler/` und ist eine **reine Funktion**: kein
 Datenbankzugriff, keine Systemzeit, kein Zufall. Gleicher Input ergibt denselben Plan –
-sonst wäre er weder testbar noch erklärbar.
+sonst wäre er weder testbar noch erklärbar. Er plant alle Gruppen in einem Lauf; eine
+Person kann über Gruppengrenzen hinweg nie an zwei Orten gleichzeitig stehen, auch wenn
+die Blöcke der Gruppen unterschiedlich geschnitten sind.
 
 Je Zeitfenster wird ein **Min-Cost-Matching** gelöst (Ungarischer Algorithmus) statt
 gierig zu verteilen. Ein gieriges Verfahren setzt die erste passende Person und
 verbraucht damit womöglich die einzige, die einen anderen Pflichtplatz hätte füllen
 können – genau diese Fehlklasse produzierte Version 1.
 
-Drei Durchläufe je Block:
+Zwei Betriebsarten:
+
+- `fresh`: die Woche entsteht neu – gesperrte Zuweisungen, dann die Musterwoche, dann
+  werden die Lücken gefüllt.
+- `replan`: die bisherige Woche bleibt stehen, soweit sie noch gültig ist; nur Lücken
+  werden gefüllt. Bleibt ein Pflichtplatz offen, wird der betroffene Block mit
+  Stabilitätsprämie neu gelöst – und nur behalten, wenn danach mehr Pflichtplätze
+  besetzt sind. Das Ergebnis samt Unterschied zur bisherigen Woche ist der
+  Umplanungsvorschlag.
+
+Drei Durchläufe je Zeitfenster, Pflicht vor Kür über alle Gruppen hinweg:
 
 1. Pflichtplätze, nur eigenständige Kräfte
 2. Pflichtplätze, jetzt auch Betreute – aber nur dort, wo eine Betreuung sitzt
@@ -127,7 +188,12 @@ Die Betreuungspflicht ist bewusst **keine** Bedingung in der Eignungsprüfung: o
 mit »nur mit Betreuung« gesetzt werden darf, hängt vom Rest der Lösung ab. Sie wird
 über die Reihenfolge der Durchläufe gelöst.
 
-Alle Gewichte stehen in der `settings`-Tabelle, nicht als Zahlenliterale im Code.
+Daneben zwei weitere reine Funktionen: `assessAbsence()` (Antragsprüfung als
+Kopfzahl-Rechnung je Tag) und `planClosure()` (Notbesetzung und Urlaub einer
+Schließzeit, fair rotierend).
+
+Alle Gewichte stehen in der `settings`-Tabelle und sind unter _Einstellungen → Planung_
+änderbar, nicht als Zahlenliterale im Code.
 
 ## Verbindliche Konventionen
 
@@ -147,6 +213,11 @@ auf 12:00 Ortszeit verankert und damit gegen die Zeitumstellung immun ist.
 
 **Der Scheduler ist deterministisch.** In `packages/shared/src/scheduler/` sind
 `Math.random()`, `Date.now()` und `new Date()` per Lint-Regel gesperrt.
+
+**Schemaänderungen laufen als nummerierte Migration** in `apps/server/src/db/migrations/`.
+SQLite kann CHECK-Bedingungen nicht ändern; solche Tabellen werden neu angelegt, kopiert
+und umbenannt. Der Migrationsläufer schaltet dafür die Fremdschlüssel ab und prüft sie
+nach jeder Migration mit `foreign_key_check`.
 
 ## Sicherheit und Daten
 

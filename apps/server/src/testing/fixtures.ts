@@ -44,8 +44,7 @@ export async function createUser(
 export interface CreateEmployeeOptions {
   readonly firstName?: string;
   readonly lastName?: string;
-  readonly staffType?: 'doctor' | 'mfa' | 'trainee';
-  readonly isPcm?: boolean;
+  readonly staffType?: 'doctor' | 'pcm' | 'mfa' | 'trainee';
   readonly canHomeoffice?: boolean;
   readonly notes?: string;
 }
@@ -54,15 +53,14 @@ export function createEmployee(db: Db, options: CreateEmployeeOptions = {}): str
   const id = randomUUID();
   db.prepare(
     `INSERT INTO employees
-       (id, first_name, last_name, staff_type, is_pcm, employment, target_hours_week,
+       (id, first_name, last_name, staff_type, employment, target_hours_week,
         can_homeoffice, notes)
-     VALUES (?, ?, ?, ?, ?, 'fulltime', 40, ?, ?)`,
+     VALUES (?, ?, ?, ?, 'fulltime', 40, ?, ?)`,
   ).run(
     id,
     options.firstName ?? 'Anna',
     options.lastName ?? 'Beispiel',
     options.staffType ?? 'mfa',
-    options.isPcm ? 1 : 0,
     options.canHomeoffice ? 1 : 0,
     options.notes ?? '',
   );

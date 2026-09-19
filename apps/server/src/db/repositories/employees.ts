@@ -7,6 +7,7 @@ import type {
   PracticeWeekday,
   StaffType,
   WeeklyWorkTimes,
+  WorkLocation,
 } from '@haeppi/shared';
 import { NOT_WORKING, PRACTICE_WEEKDAYS } from '@haeppi/shared';
 import type { Db } from '../index.js';
@@ -16,7 +17,6 @@ interface EmployeeRow {
   first_name: string;
   last_name: string;
   staff_type: StaffType;
-  is_pcm: number;
   employment: EmploymentType;
   target_hours_week: number;
   can_homeoffice: number;
@@ -36,6 +36,7 @@ interface WorkTimeRow {
   start_min: number;
   end_min: number;
   break_min: number;
+  location: WorkLocation;
 }
 
 function emptyWorkTimes(): Record<PracticeWeekday, DayWorkTime> {
@@ -50,6 +51,7 @@ function toWorkTimes(rows: readonly WorkTimeRow[]): WeeklyWorkTimes {
       startMin: row.start_min,
       endMin: row.end_min,
       breakMin: row.break_min,
+      location: row.location ?? 'practice',
     };
   }
   return result;
@@ -65,7 +67,6 @@ function toEmployee(
     firstName: row.first_name,
     lastName: row.last_name,
     staffType: row.staff_type,
-    isPcm: row.is_pcm === 1,
     employment: row.employment,
     targetHoursPerWeek: row.target_hours_week,
     canHomeoffice: row.can_homeoffice === 1,
@@ -85,6 +86,10 @@ export interface ListEmployeesOptions {
   readonly includeInactive?: boolean;
 }
 
+/** Reihenfolge der Gruppen im Plan: Aerzte, PCM, MFA, Auszubildende. */
+const STAFF_ORDER = `CASE staff_type
+  WHEN 'doctor' THEN 0 WHEN 'pcm' THEN 1 WHEN 'mfa' THEN 2 ELSE 3 END`;
+
 /**
  * Laedt alle Mitarbeiter samt Arbeitszeiten und Qualifikationen.
  *
@@ -96,7 +101,7 @@ export function listEmployees(db: Db, options: ListEmployeesOptions = {}): Emplo
     .prepare(
       `SELECT * FROM employees
         ${options.includeInactive ? '' : 'WHERE is_active = 1'}
-        ORDER BY staff_type, sort_order, last_name, first_name`,
+        ORDER BY ${STAFF_ORDER}, sort_order, last_name, first_name`,
     )
     .all() as EmployeeRow[];
 
@@ -153,12 +158,20 @@ export function replaceWorkTimes(db: Db, employeeId: Id, workTimes: WeeklyWorkTi
   db.prepare(`DELETE FROM employee_worktimes WHERE employee_id = ?`).run(employeeId);
   const insert = db.prepare(
     `INSERT INTO employee_worktimes
-       (employee_id, weekday, is_working, start_min, end_min, break_min)
-     VALUES (?, ?, ?, ?, ?, ?)`,
+       (employee_id, weekday, is_working, start_min, end_min, break_min, location)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
   );
   for (const weekday of PRACTICE_WEEKDAYS) {
     const day = workTimes[weekday];
-    insert.run(employeeId, weekday, day.isWorking ? 1 : 0, day.startMin, day.endMin, day.breakMin);
+    insert.run(
+      employeeId,
+      weekday,
+      day.isWorking ? 1 : 0,
+      day.startMin,
+      day.endMin,
+      day.breakMin,
+      day.location ?? 'practice',
+    );
   }
 }
 
@@ -178,15 +191,14 @@ export function createEmployee(db: Db, input: EmployeeInput): Employee {
   const write = db.transaction(() => {
     db.prepare(
       `INSERT INTO employees
-         (id, first_name, last_name, staff_type, is_pcm, employment, target_hours_week,
+         (id, first_name, last_name, staff_type, employment, target_hours_week,
           can_homeoffice, color, entry_date, exit_date, is_active, sort_order, notes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       id,
       input.firstName,
       input.lastName,
       input.staffType,
-      input.isPcm ? 1 : 0,
       input.employment,
       input.targetHoursPerWeek,
       input.canHomeoffice ? 1 : 0,
@@ -212,7 +224,7 @@ export function updateEmployee(db: Db, id: Id, input: EmployeeInput): Employee {
     const result = db
       .prepare(
         `UPDATE employees
-            SET first_name = ?, last_name = ?, staff_type = ?, is_pcm = ?, employment = ?,
+            SET first_name = ?, last_name = ?, staff_type = ?, employment = ?,
                 target_hours_week = ?, can_homeoffice = ?, color = ?, entry_date = ?,
                 exit_date = ?, is_active = ?, sort_order = ?, notes = ?,
                 version = version + 1, updated_at = datetime('now')
@@ -222,7 +234,6 @@ export function updateEmployee(db: Db, id: Id, input: EmployeeInput): Employee {
         input.firstName,
         input.lastName,
         input.staffType,
-        input.isPcm ? 1 : 0,
         input.employment,
         input.targetHoursPerWeek,
         input.canHomeoffice ? 1 : 0,

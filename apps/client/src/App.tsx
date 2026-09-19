@@ -13,6 +13,7 @@ import { MatrixView } from './views/MatrixView';
 import { PrintEmployeePlan, PrintWeekPlan } from './views/PrintViews';
 import { RosterView } from './views/RosterView';
 import { SettingsView } from './views/SettingsView';
+import { TemplateView } from './views/TemplateView';
 import { TimeModelView } from './views/TimeModelView';
 
 export default function App() {
@@ -59,7 +60,7 @@ export default function App() {
   return (
     <Routes>
       {/* Druckansichten laufen ohne Navigation und Seitenrahmen. */}
-      <Route path="/druck/woche/:plan" element={<PrintWeekPlan />} />
+      <Route path="/druck/woche" element={<PrintWeekPlan />} />
       <Route path="/druck/person/:employeeId" element={<PrintEmployeePlan />} />
 
       <Route element={<AppShell user={user} />}>
@@ -69,6 +70,7 @@ export default function App() {
         <Route path="abwesenheiten" element={<AbsencesView user={user} />} />
         {user.role === 'admin' && (
           <>
+            <Route path="musterwoche" element={<TemplateView />} />
             <Route path="matrix" element={<MatrixView />} />
             <Route path="bereiche" element={<AreasView />} />
             <Route path="zeitmodell" element={<TimeModelView />} />

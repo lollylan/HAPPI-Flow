@@ -1,17 +1,22 @@
 import type { Id } from './common.js';
 
-/** Es gibt zwei getrennte Dienstplaene. */
-export type PlanKind = 'doctor' | 'mfa';
+/**
+ * Die drei Gruppen des Dienstplans. Sie stehen in **einem** Plan
+ * untereinander, jede mit eigenem Zeitmodell und eigenen Bereichen.
+ */
+export type PlanKind = 'doctor' | 'pcm' | 'mfa';
+
+export const PLAN_KINDS: readonly PlanKind[] = ['doctor', 'pcm', 'mfa'];
 
 export const PLAN_LABELS: Readonly<Record<PlanKind, string>> = {
   doctor: 'Ärzte',
+  pcm: 'PCM',
   mfa: 'MFA',
 };
 
 /**
  * Art des Einsatzortes. Steuert Sonderlogik:
  * - `room` zaehlt gegen die Zimmerkapazitaet (vier Behandlungszimmer)
- * - `homeoffice` verlangt die Homeoffice-Berechtigung
  * - `housecall` ist der VERAH-Bereich fuer Hausbesuche
  */
 export type AreaKind = 'room' | 'service' | 'office' | 'homeoffice' | 'housecall';
@@ -22,6 +27,20 @@ export const AREA_KIND_LABELS: Readonly<Record<AreaKind, string>> = {
   office: 'Innendienst',
   homeoffice: 'Homeoffice',
   housecall: 'Hausbesuche',
+};
+
+/**
+ * Wo der Bereich erledigt wird.
+ * - `practice`: nur vor Ort - wer an dem Tag im Homeoffice arbeitet, faellt aus
+ * - `home`: nur von zu Hause - setzt die Homeoffice-Berechtigung voraus
+ * - `any`: egal
+ */
+export type AreaLocation = 'practice' | 'home' | 'any';
+
+export const AREA_LOCATION_LABELS: Readonly<Record<AreaLocation, string>> = {
+  practice: 'Nur in der Praxis',
+  home: 'Nur im Homeoffice',
+  any: 'Praxis oder Homeoffice',
 };
 
 export interface WorkArea {
@@ -36,13 +55,18 @@ export interface WorkArea {
   readonly minStaff: number;
   /** Obergrenze; `null` = unbegrenzt. */
   readonly maxStaff: number | null;
-  readonly requiresHomeoffice: boolean;
+  readonly location: AreaLocation;
   /**
-   * Pflichtrotation: jede Person des Plans soll hier mindestens so oft pro
+   * Pflichtrotation: jede Person der Gruppe soll hier mindestens so oft pro
    * Woche eingesetzt werden - damit niemand das Labor verlernt.
    * `null` = keine Pflichtrotation. Pro Person uebersteuerbar.
    */
   readonly rotationMinPerWeek: number | null;
+  /**
+   * Folgeaufgabe: bevorzugt wird, wer am vorigen Arbeitstag in diesem
+   * Bereich war. Beispiel: "Hausbesuche schreiben" folgt auf "Hausbesuche".
+   */
+  readonly followUpAreaId: Id | null;
   readonly icon: string;
   readonly color: string;
   readonly sortOrder: number;
@@ -98,4 +122,8 @@ export const AREA_ICONS = [
   '🗂️',
   '🧑‍⚕️',
   '💳',
+  '📹',
+  '🤧',
+  '✍️',
+  '🚪',
 ] as const;

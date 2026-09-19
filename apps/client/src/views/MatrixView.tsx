@@ -1,13 +1,23 @@
 import { useMemo, useState } from 'react';
 import { Ban, Check, Eye, Heart, Loader2, Minus, ThumbsDown, X } from 'lucide-react';
-import type { Clearance, Employee, MatrixEntry, Preference, WorkArea } from '@haeppi/shared';
+import type {
+  Clearance,
+  Employee,
+  MatrixEntry,
+  PlanKind,
+  Preference,
+  WorkArea,
+} from '@haeppi/shared';
 import {
   CLEARANCE_LABELS,
   DEFAULT_MATRIX_ENTRY,
+  PLAN_KINDS,
+  PLAN_LABELS,
   PREFERENCE_LABELS,
   STAFF_TYPE_LABELS,
   effectiveMinPerWeek,
   matrixKey,
+  planForStaffType,
   shortName,
 } from '@haeppi/shared';
 import { ApiError } from '../api/client';
@@ -23,8 +33,6 @@ import {
   Select,
   TextInput,
 } from '../components/ui';
-
-type Plan = 'mfa' | 'doctor';
 
 const CLEARANCE_STYLE: Record<Clearance, string> = {
   solo: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300',
@@ -46,7 +54,8 @@ const PREFERENCE_ICON: Record<Preference, typeof Heart | null> = {
 };
 
 export function MatrixView() {
-  const [plan, setPlan] = useState<Plan>('mfa');
+  const [plan, setPlan] = useState<PlanKind>('mfa');
+  const [showOthers, setShowOthers] = useState(false);
   const [editing, setEditing] = useState<{ employee: Employee; area: WorkArea } | null>(null);
 
   const { data: employees, isLoading: loadingEmployees } = useEmployees();
@@ -68,12 +77,16 @@ export function MatrixView() {
     );
   }
 
-  // Aerzte planen in Zimmern, MFA in Funktionsbereichen - die Matrix zeigt
-  // immer nur eine der beiden Welten, sonst wird das Raster unlesbar.
-  const rows = (employees ?? []).filter((employee) =>
-    plan === 'doctor' ? employee.staffType === 'doctor' : employee.staffType !== 'doctor',
-  );
+  // Die Matrix zeigt immer eine Gruppe. Personen anderer Gruppen lassen
+  // sich einblenden, um sie gezielt fuer einzelne Bereiche freizugeben -
+  // so hilft die PCM in der Anmeldung aus, ohne zum MFA-Pool zu gehoeren.
   const columns = (workAreas ?? []).filter((area) => area.plan === plan);
+  const rows = (employees ?? []).filter((employee) => {
+    if (planForStaffType(employee.staffType) === plan) return true;
+    if (showOthers) return true;
+    // Wer schon eine Freigabe hat, bleibt sichtbar.
+    return columns.some((area) => byKey.has(matrixKey(employee.id, area.id)));
+  });
 
   return (
     <div className="p-8">
@@ -81,20 +94,31 @@ export function MatrixView() {
         title="Einsatz-Matrix"
         subtitle="Wer darf wo arbeiten, wie gerne – und wie oft muss es sein?"
         action={
-          <div className="flex rounded-lg border border-slate-200 p-1 dark:border-slate-700">
-            {(['mfa', 'doctor'] as const).map((value) => (
-              <button
-                key={value}
-                onClick={() => setPlan(value)}
-                className={`rounded-md px-3 py-1.5 text-sm transition ${
-                  plan === value
-                    ? 'bg-blue-600 font-medium text-white'
-                    : 'hover:bg-slate-100 dark:hover:bg-slate-800'
-                }`}
-              >
-                {value === 'mfa' ? 'MFA' : 'Ärzte'}
-              </button>
-            ))}
+          <div className="flex items-center gap-3">
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
+              <input
+                type="checkbox"
+                checked={showOthers}
+                onChange={(event) => setShowOthers(event.target.checked)}
+                className="size-4 rounded border-slate-300 text-blue-600 dark:border-slate-600"
+              />
+              andere Gruppen einblenden
+            </label>
+            <div className="flex rounded-lg border border-slate-200 p-1 dark:border-slate-700">
+              {PLAN_KINDS.map((value) => (
+                <button
+                  key={value}
+                  onClick={() => setPlan(value)}
+                  className={`rounded-md px-3 py-1.5 text-sm transition ${
+                    plan === value
+                      ? 'bg-blue-600 font-medium text-white'
+                      : 'hover:bg-slate-100 dark:hover:bg-slate-800'
+                  }`}
+                >
+                  {PLAN_LABELS[value]}
+                </button>
+              ))}
+            </div>
           </div>
         }
       />
@@ -104,7 +128,7 @@ export function MatrixView() {
       {rows.length === 0 || columns.length === 0 ? (
         <EmptyState
           title="Noch nichts zu verteilen"
-          hint="Für die Matrix braucht es mindestens eine Person und einen Arbeitsbereich in diesem Plan."
+          hint="Für die Matrix braucht es mindestens eine Person und einen Arbeitsbereich in dieser Gruppe."
         />
       ) : (
         <Card className="mt-4 overflow-x-auto">
@@ -160,6 +184,7 @@ export function MatrixView() {
                       <MatrixCell
                         entry={byKey.get(matrixKey(employee.id, area.id))}
                         area={area}
+                        foreign={planForStaffType(employee.staffType) !== plan}
                         onClick={() => setEditing({ employee, area })}
                       />
                     </td>
@@ -211,13 +236,16 @@ function Legend() {
 function MatrixCell({
   entry,
   area,
+  foreign,
   onClick,
 }: {
   entry: MatrixEntry | undefined;
   area: WorkArea;
+  /** Person gehoert zu einer anderen Gruppe: ohne Eintrag gesperrt. */
+  foreign: boolean;
   onClick: () => void;
 }) {
-  const clearance = entry?.clearance ?? DEFAULT_MATRIX_ENTRY.clearance;
+  const clearance = entry?.clearance ?? (foreign ? 'blocked' : DEFAULT_MATRIX_ENTRY.clearance);
   const preference = entry?.preference ?? DEFAULT_MATRIX_ENTRY.preference;
   const ClearanceIcon = CLEARANCE_ICON[clearance];
   const PreferenceIcon = PREFERENCE_ICON[preference];
