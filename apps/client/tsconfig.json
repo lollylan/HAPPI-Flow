@@ -1,0 +1,20 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "resolveJsonModule": true,
+    "types": ["vite/client"],
+
+    // Der Client wird von Vite gebuendelt, nicht von tsc. Deshalb kein Emit
+    // und kein composite - er haengt nicht im `tsc -b`-Baum, sondern wird
+    // ueber `tsc --noEmit -p apps/client` separat geprueft.
+    "noEmit": true,
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx", "vite.config.ts"]
+}

@@ -1,0 +1,10 @@
+node_modules
+dist
+release
+coverage
+package-lock.json
+*.sql
+
+# Erzeugt von apps/desktop/scripts/prepare-resources.mjs
+apps/desktop/server-dist
+apps/desktop/resources

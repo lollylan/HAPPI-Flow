@@ -1,0 +1,28 @@
+{
+  "name": "@haeppi/server",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Lokaler Express-Server mit SQLite. Haelt die Praxisdaten und setzt Authentifizierung und Datenschutz durch.",
+  "main": "./dist/index.js",
+  "scripts": {
+    "dev": "tsx watch --clear-screen=false src/index.ts",
+    "start": "node dist/index.js",
+    "build": "tsc -b && node scripts/copy-sql.mjs"
+  },
+  "dependencies": {
+    "@haeppi/shared": "*",
+    "@node-rs/argon2": "^2.0.2",
+    "cookie-parser": "^1.4.7",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.6.1",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/cookie-parser": "^1.4.10",
+    "@types/express": "^5.0.6",
+    "@types/supertest": "^7.2.1",
+    "supertest": "^7.2.2",
+    "tsx": "^4.23.4"
+  }
+}
